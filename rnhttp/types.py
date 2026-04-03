@@ -3,10 +3,7 @@
 Based on RFC 9112 - HTTP/1.1 Message Syntax and Routing (June 2022)
 Uses httptools for parsing."""
 
-from typing import (
-    final,
-    override,
-)
+from typing import final
 
 from httptools import (
     HttpParserError as HttptoolsParserError,
@@ -15,6 +12,8 @@ from httptools import (
     HttpRequestParser,
     HttpResponseParser,
 )
+
+from ._compat import override
 
 
 class HttpParserError(Exception):

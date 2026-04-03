@@ -5,7 +5,10 @@ import asyncio
 import os
 import sys
 import threading
-from typing import Any, cast
+from typing import (
+    Any,
+    cast,
+)
 
 import RNS
 
