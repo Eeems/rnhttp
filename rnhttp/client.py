@@ -152,7 +152,6 @@ class HttpClient:
         response_error: Exception | None = None
 
         def on_reader_ready(ready: int) -> None:
-            print(f"Reponse ready: {ready}")
             nonlocal response_data, response_error, response_event, buffer
             try:
                 response_data = buffer.read(ready)

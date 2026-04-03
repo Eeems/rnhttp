@@ -24,6 +24,8 @@ HandlerType = (
 )
 
 T = TypeVar("T")
+
+
 def await_in_sync(awaitable: Awaitable[T]) -> T:
     """Run any awaitable from synchronous code safely."""
     try:
@@ -32,6 +34,7 @@ def await_in_sync(awaitable: Awaitable[T]) -> T:
 
     except RuntimeError:
         return asyncio.run(awaitable)  # pyright: ignore[reportUnknownVariableType, reportArgumentType]
+
 
 class HttpServer:
     """HTTP/1.1 server using RNS for transport."""
@@ -280,11 +283,10 @@ async def main():
         identity_path=args.identity,
     )
 
-    def default_handler(request: HttpRequest) -> HttpResponse:
+    def default_handler(_request: HttpRequest) -> HttpResponse:
         return HttpResponse(
-            status=404,
-            reason="Not Found",
-            body=f"{request.path} not found".encode(),
+            status=200,
+            body=b"Hello world!",
         )
 
     server.set_default_handler(default_handler)

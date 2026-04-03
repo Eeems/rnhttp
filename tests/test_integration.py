@@ -203,7 +203,7 @@ class HttpIntegrationStack:
 
         if self.server_proc.poll() is not None:
             raise SetupError(
-                f"rngit exited early with code {self.server_proc.returncode}"
+                f"server exited early with code {self.server_proc.returncode}"
             )
 
         assert dest_hash is not None, "Could not get destination hash from server"
@@ -327,7 +327,7 @@ class TestHttpIntegration:
         try:
             stack.start_server()
             result = stack.run_client(
-                "/echo",
+                "/resource",
                 "POST",
                 body=b"hello",
                 response_code=True,
