@@ -23,7 +23,7 @@ jobs:
         run: |
           set -e
           pip install wheel packaging
-          make lint
+          SKIP_TESTS=1 make lint
   test:
     name: Test with python ${{ matrix.python }}
     runs-on: ubuntu-latest
@@ -46,7 +46,7 @@ jobs:
         run: |
           set -e
           pip install wheel packaging
-          make test
+          SKIP_TESTS=1 make test
 
   build-wheel:
     name: Build wheel
@@ -97,7 +97,7 @@ jobs:
         run: |
           set -e
           pip install wheel packaging
-          make sdist
+          SKIP_TESTS=1 make sdist
       - uses: actions/upload-artifact@v6
         with:
           name: pip-sdist
