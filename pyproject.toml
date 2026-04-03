@@ -45,6 +45,10 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
+[build-system]
+requires = ["setuptools>=70.1", "nuitka>=4.0.6"]
+build-backend = "nuitka.distutils.Build"
+
 [tool.ruff]
 exclude = [".venv", "build", "**/__whitelist.py"]
 
