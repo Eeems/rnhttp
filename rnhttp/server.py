@@ -278,6 +278,8 @@ async def main():
     assert isinstance(args.verbose, bool)  # pyright: ignore[reportAny]
     _ = RNS.Reticulum(config_path, RNS.LOG_VERBOSE if args.verbose else RNS.LOG_WARNING)
 
+    assert isinstance(args.identity, str | None)  # pyright: ignore[reportAny]
+    assert isinstance(args.port, int)  # pyright: ignore[reportAny]
     server = HttpServer(
         port=args.port,
         identity_path=args.identity,

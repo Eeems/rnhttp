@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from collections.abc import Awaitable
 from unittest.mock import (
     MagicMock,
     patch,
@@ -22,13 +23,13 @@ class TestHttpServer:
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
 
-            assert server._port == 8080
-            assert server._identity_path is not None
-            assert server._request_timeout == 60.0
-            assert server._read_timeout == 30.0
-            assert server._destination is None
-            assert server._running is False
-            assert server._links == {}
+            assert server._port == 8080  # pyright: ignore[reportPrivateUsage]  # noqa: PLR2004
+            assert server._identity_path is not None  # pyright: ignore[reportPrivateUsage]
+            assert server._request_timeout == 60.0  # pyright: ignore[reportPrivateUsage]  # noqa: PLR2004
+            assert server._read_timeout == 30.0  # pyright: ignore[reportPrivateUsage]  # noqa: PLR2004
+            assert server._destination is None  # pyright: ignore[reportPrivateUsage]
+            assert server._running is False  # pyright: ignore[reportPrivateUsage]
+            assert server._links == {}  # pyright: ignore[reportPrivateUsage]
 
     def test_custom_values(self):
         """Test custom initialization values."""
@@ -40,14 +41,14 @@ class TestHttpServer:
                 read_timeout=15.0,
             )
 
-            assert server._port == 9000
-            assert server._identity_path == "/custom/path"
-            assert server._request_timeout == 20.0
-            assert server._read_timeout == 15.0
+            assert server._port == 9000  # pyright: ignore[reportPrivateUsage]  # noqa: PLR2004
+            assert server._identity_path == "/custom/path"  # pyright: ignore[reportPrivateUsage]
+            assert server._request_timeout == 20.0  # pyright: ignore[reportPrivateUsage]  # noqa: PLR2004
+            assert server._read_timeout == 15.0  # pyright: ignore[reportPrivateUsage]
 
-    def test_default_identity_path(self):
+    def test_default_identity_path(self):  # noqa: ANN201
         """Test default identity path generation."""
-        path = HttpServer._default_identity_path()
+        path = HttpServer._default_identity_path()  # pyright: ignore[reportPrivateUsage]
 
         home = os.path.expanduser("~")
         expected = os.path.join(home, ".rnhttp", "identity")
@@ -57,7 +58,7 @@ class TestHttpServer:
         """Test port property."""
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
-            assert server.port == 8080
+            assert server.port == 8080  # noqa: PLR2004
 
     def test_destination_hash_none_when_not_started(self):
         """Test destination_hash is None before server starts."""
@@ -81,27 +82,27 @@ class TestHttpServerRoutes:
             server = HttpServer(port=8080)
 
             @server.route("/test")
-            def handler(request: HttpRequest) -> HttpResponse:
+            def handler(_: HttpRequest) -> HttpResponse:
                 return HttpResponse(status=200, reason="OK")
 
-            assert ("GET", "/test") in server._handlers
-            assert server._handlers[("GET", "/test")] == handler
+            assert ("GET", "/test") in server._handlers  # pyright: ignore[reportPrivateUsage]
+            assert server._handlers[("GET", "/test")] == handler  # pyright: ignore[reportPrivateUsage]
 
     def test_route_multiple_paths(self):
         """Test registering multiple routes."""
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
 
-            def handler1(request: HttpRequest) -> HttpResponse:
+            def handler1(_: HttpRequest) -> HttpResponse:
                 return HttpResponse(status=200, reason="OK")
 
-            def handler2(request: HttpRequest) -> HttpResponse:
+            def handler2(_: HttpRequest) -> HttpResponse:
                 return HttpResponse(status=201, reason="Created")
 
-            server._handlers["/path1"] = handler1
-            server._handlers["/path2"] = handler2
+            server._handlers[("GET", "/path1")] = handler1  # pyright: ignore[reportPrivateUsage]
+            server._handlers[("GET", "/path2")] = handler2  # pyright: ignore[reportPrivateUsage]
 
-            assert len(server._handlers) == 2
+            assert len(server._handlers) == 2  # pyright: ignore[reportPrivateUsage]
 
 
 class TestHttpServerMatchPattern:
@@ -112,56 +113,62 @@ class TestHttpServerMatchPattern:
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
 
-            assert server._match_pattern("/test", "/test") is True
-            assert server._match_pattern("/test", "/other") is False
+            assert server._match_pattern("/test", "/test") is True  # pyright: ignore[reportPrivateUsage]
+            assert server._match_pattern("/test", "/other") is False  # pyright: ignore[reportPrivateUsage]
 
     def test_wildcard_match(self):
         """Test wildcard pattern matching."""
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
 
-            assert server._match_pattern("/api/*", "/api/users") is True
-            assert server._match_pattern("/api/*", "/api/users/123") is True
-            assert server._match_pattern("/api/*", "/other") is False
+            assert server._match_pattern("/api/*", "/api/users") is True  # pyright: ignore[reportPrivateUsage]
+            assert server._match_pattern("/api/*", "/api/users/123") is True  # pyright: ignore[reportPrivateUsage]
+            assert server._match_pattern("/api/*", "/other") is False  # pyright: ignore[reportPrivateUsage]
 
 
 class TestHttpServerHandleRequest:
     """Tests for request handling."""
 
-    def test_handle_request_exact_match(self):
+    async def test_handle_request_exact_match(self):
         """Test handling request with exact path match."""
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
             mock_handler = MagicMock(return_value=HttpResponse(status=200, reason="OK"))
-            server._handlers[("GET", "/test")] = mock_handler
+            server._handlers[("GET", "/test")] = mock_handler  # pyright: ignore[reportPrivateUsage]
 
             request = HttpRequest(method="GET", path="/test")
-            response = server._handle_request(None, request)  # pyright: ignore[reportArgumentType]
+            response = server._handle_request(None, request)  # pyright: ignore[reportArgumentType, reportPrivateUsage]
+            if isinstance(response, Awaitable):
+                response = await response
 
             mock_handler.assert_called_once_with(request)
             assert response.status == 200
 
-    def test_handle_request_wildcard_match(self):
+    async def test_handle_request_wildcard_match(self):
         """Test handling request with wildcard match."""
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
             mock_handler = MagicMock(return_value=HttpResponse(status=200, reason="OK"))
-            server._handlers[("GET", "/api/*")] = mock_handler
+            server._handlers[("GET", "/api/*")] = mock_handler  # pyright: ignore[reportPrivateUsage]
 
             request = HttpRequest(method="GET", path="/api/users")
-            _ = server._handle_request(None, request)  # pyright: ignore[reportArgumentType]
+            response = server._handle_request(None, request)  # pyright: ignore[reportArgumentType, reportPrivateUsage]
+            if isinstance(response, Awaitable):
+                _ = await response
 
             mock_handler.assert_called_once_with(request)
 
-    def test_handle_request_not_found(self):
+    async def test_handle_request_not_found(self):
         """Test handling request with no matching handler."""
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
 
             request = HttpRequest(method="GET", path="/nonexistent")
-            response = server._handle_request(None, request)  # pyright: ignore[reportArgumentType]
+            response = server._handle_request(None, request)  # pyright: ignore[reportArgumentType, reportPrivateUsage]
+            if isinstance(response, Awaitable):
+                response = await response
 
-            assert response.status == 404
+            assert response.status == 404  # noqa: PLR2004
             assert response.body == b"Not Found"
 
 
@@ -174,10 +181,10 @@ class TestHttpServerLifecycle:
     @patch("rnhttp.server.os")
     def test_start(
         self,
-        mock_os,
-        mock_identity,
-        mock_destination,
-        mock_reticulum,
+        mock_os,  # pyright: ignore[reportUnknownParameterType, reportMissingParameterType]
+        mock_identity,  # pyright: ignore[reportUnknownParameterType, reportMissingParameterType]
+        mock_destination,  # pyright: ignore[reportUnknownParameterType, reportMissingParameterType]
+        mock_reticulum,  # pyright: ignore[reportUnknownParameterType, reportMissingParameterType, reportUnusedParameter]
     ):
         """Test starting the server."""
         mock_identity_instance = MagicMock()
@@ -186,17 +193,17 @@ class TestHttpServerLifecycle:
         mock_destination_instance.hash = b"\x00" * 32
         mock_destination_instance.hexhash = "00" * 32
         mock_destination.return_value = mock_destination_instance
-        mock_os.path.exists = MagicMock(return_value=False)
+        mock_os.path.exists = MagicMock(return_value=False)  # pyright: ignore[reportUnknownMemberType]
         mock_os.makedirs = MagicMock()
-        mock_os.path.dirname = MagicMock(return_value="/home/user/.rnhttp")
+        mock_os.path.dirname = MagicMock(return_value="/home/user/.rnhttp")  # pyright: ignore[reportUnknownMemberType]
 
         server = HttpServer(port=8080)
 
         asyncio.run(server.start())
 
-        assert server._running is True
-        mock_destination_instance.accepts_links.assert_called_once_with(True)
-        mock_destination_instance.set_link_established_callback.assert_called_once()
+        assert server._running is True  # pyright: ignore[reportPrivateUsage]
+        mock_destination_instance.accepts_links.assert_called_once_with(True)  # pyright: ignore[reportAny]
+        mock_destination_instance.set_link_established_callback.assert_called_once()  # pyright: ignore[reportAny]
 
     @patch("rnhttp.server.RNS.Reticulum")
     @patch("rnhttp.server.RNS.Destination")
@@ -204,10 +211,10 @@ class TestHttpServerLifecycle:
     @patch("rnhttp.server.os")
     def test_stop(
         self,
-        mock_os,
-        mock_identity,
-        mock_destination,
-        mock_reticulum,
+        mock_os,  # pyright: ignore[reportUnknownParameterType, reportMissingParameterType]
+        mock_identity,  # pyright: ignore[reportUnknownParameterType, reportMissingParameterType]
+        mock_destination,  # pyright: ignore[reportUnknownParameterType, reportMissingParameterType]
+        mock_reticulum,  # pyright: ignore[reportUnknownParameterType, reportMissingParameterType, reportUnusedParameter]
     ):
         """Test stopping the server."""
         mock_identity_instance = MagicMock()
@@ -216,14 +223,14 @@ class TestHttpServerLifecycle:
         mock_destination_instance.hash = b"\x00" * 32
         mock_destination_instance.hexhash = "00" * 32
         mock_destination.return_value = mock_destination_instance
-        mock_os.path.exists = MagicMock(return_value=False)
+        mock_os.path.exists = MagicMock(return_value=False)  # pyright: ignore[reportUnknownMemberType]
         mock_os.makedirs = MagicMock()
-        mock_os.path.dirname = MagicMock(return_value="/home/user/.rnhttp")
+        mock_os.path.dirname = MagicMock(return_value="/home/user/.rnhttp")  # pyright: ignore[reportUnknownMemberType]
 
         server = HttpServer(port=8080)
 
         asyncio.run(server.start())
         asyncio.run(server.stop())
 
-        assert server._running is False
-        mock_destination_instance.accepts_links.assert_called_with(False)
+        assert server._running is False  # pyright: ignore[reportPrivateUsage]
+        mock_destination_instance.accepts_links.assert_called_with(False)  # pyright: ignore[reportAny]

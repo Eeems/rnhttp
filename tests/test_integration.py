@@ -4,7 +4,6 @@ import atexit
 import os
 import random
 import re
-import select
 import shutil
 import string
 import subprocess
@@ -48,7 +47,7 @@ _rnsd_config_dir: Path | None = None
 
 
 @pytest.fixture(scope="session", autouse=True)
-def shared_rnsd() -> Generator[Path, Any, None]:
+def shared_rnsd() -> Generator[Path, Any, None]:  # pyright: ignore[reportExplicitAny]
     global _rnsd_process
     global _rnsd_config_dir
     config_dir = Path(tempfile.mkdtemp())
@@ -286,7 +285,7 @@ class HttpIntegrationStack:
 
 
 class TestHttpIntegration:
-    def test_server_starts(self, tmp_path: Path) -> None:
+    def test_server_starts(self) -> None:
         """Test that server starts and announces destination."""
         # RFC 9112, 3 (server announces capability)
         if not _rnsd_config_dir:
@@ -301,7 +300,7 @@ class TestHttpIntegration:
         finally:
             stack.cleanup()
 
-    def test_get_root(self, tmp_path: Path) -> None:
+    def test_get_root(self) -> None:
         """Test GET request to root path."""
         # RFC 9110, 9.3.1 GET
         if not _rnsd_config_dir:
@@ -317,7 +316,7 @@ class TestHttpIntegration:
         finally:
             stack.cleanup()
 
-    def test_post_with_body(self, tmp_path: Path) -> None:
+    def test_post_with_body(self) -> None:
         """Test POST request with body."""
         # RFC 9110, 9.3.3 POST
         if not _rnsd_config_dir:
@@ -338,7 +337,7 @@ class TestHttpIntegration:
         finally:
             stack.cleanup()
 
-    def test_404_not_found(self, tmp_path: Path) -> None:
+    def test_404_not_found(self) -> None:
         """Test 404 response for non-existent path."""
         # RFC 9110, 15.5.15 404 Not Found
         if not _rnsd_config_dir:
@@ -354,7 +353,7 @@ class TestHttpIntegration:
         finally:
             stack.cleanup()
 
-    def test_put_request(self, tmp_path: Path) -> None:
+    def test_put_request(self) -> None:
         """Test PUT request."""
         # RFC 9110, 9.3.6 PUT
         if not _rnsd_config_dir:
@@ -375,7 +374,7 @@ class TestHttpIntegration:
         finally:
             stack.cleanup()
 
-    def test_delete_request(self, tmp_path: Path) -> None:
+    def test_delete_request(self) -> None:
         """Test DELETE request."""
         # RFC 9110, 9.3.7 DELETE
         if not _rnsd_config_dir:
@@ -391,7 +390,7 @@ class TestHttpIntegration:
         finally:
             stack.cleanup()
 
-    def test_custom_headers(self, tmp_path: Path) -> None:
+    def test_custom_headers(self) -> None:
         """Test request with custom headers."""
         # RFC 9112, 3.2 Header Fields
         if not _rnsd_config_dir:
@@ -412,7 +411,7 @@ class TestHttpIntegration:
         finally:
             stack.cleanup()
 
-    def test_response_headers_in_output(self, tmp_path: Path) -> None:
+    def test_response_headers_in_output(self) -> None:
         """Test that response headers are included in client output."""
         # RFC 9112, 3.2 Header Fields
         if not _rnsd_config_dir:

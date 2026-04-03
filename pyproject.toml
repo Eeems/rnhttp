@@ -7,19 +7,45 @@ dependencies = [
     "rns>=1.1.0",
     "httptools>=0.7.1",
 ]
+license = "MIT"
+authors = [{name = "Eeems", email="eeems@eeems.email"}]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+dynamic = ["readme"]
 
 [tool.setuptools]
 packages = ["rnhttp"]
+
+[tool.setuptools.dynamic]
+readme = {file= ["README.md"], content-type = "text/markdown"}
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
+    "ruff",
+    "basedpyright",
+    "vulture",
+    "dodgy",
+    "pyroma",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.ruff]
+exclude = [".venv", "build", "**/__whitelist.py"]
 
 [tool.ruff.lint]
 extend-select = [
@@ -45,4 +71,21 @@ ignore = [
     "ANN001",
     "ANN003",
     "ANN201",
+]
+
+[tool.pyright]
+exclude = [".venv", "build", "**/__whitelist.py"]
+reportMissingTypeStubs = false
+
+[tool.vulture]
+ignore_names = ["__*", "_*", "_"]
+ignore_decorators = [
+    "@app.request",
+    "@app.page",
+    "@app.file",
+    '@pytest.fixture',
+]
+exclude = [
+    ".venv/",
+    "build/",
 ]
