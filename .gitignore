@@ -1,0 +1,55 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reticulum
+.config/
+
+# Testing
+.tmp/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+wheelhouse/
+.repos/
+fuzz/crash-*
+fuzz/oom-*
+fuzz/timeout-*
+fuzz/slow-unit-*
+fuzz/corpus/fuzz_application/seed/
+fuzz/corpus/fuzz_client/seed/
