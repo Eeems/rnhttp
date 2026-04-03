@@ -129,17 +129,24 @@ build: sdist wheel ## Build wheel and sdist
 dist:
 	mkdir -p dist
 
+.PHONY: native-wheel
+native-wheel: dist/$(PACKAGE)-${VERSION}-${ABI}-${ABI}-${PLATFORM}.whl # Build native wheel
+
 .PHONY: wheel
-wheel: dist/git_remote_rns-${VERSION}-${ABI}-${ABI}-${PLATFORM}.whl # Build wheel
+wheel: dist/${PACKAGE}-${VERSION}-py3-none-any.whl # Build wheel
 
 .PHONY: sdist
-sdist: dist/git_remote_rns-${VERSION}.tar.gz # Build sdist
+sdist: dist/$(PACKAGE)-${VERSION}.tar.gz # Build sdist
 
-dist/git_remote_rns-${VERSION}-${ABI}-${ABI}-${PLATFORM}.whl: $(VENV_BIN_ACTIVATE) dist $(OBJ)
+dist/$(PACKAGE)-${VERSION}-${ABI}-${ABI}-${PLATFORM}.whl: $(VENV_BIN_ACTIVATE) dist $(OBJ)
 	@. ${VENV_BIN_ACTIVATE}; \
 	python -m build --wheel
 
-dist/git_remote_rns-${VERSION}.tar.gz: $(VENV_BIN_ACTIVATE) dist $(OBJ)
+dist/${PACKAGE}-${VERSION}-py3-none-any.whl: ${VENV_BIN_ACTIVATE} dist $(OBJ)
+	. ${VENV_BIN_ACTIVATE}; \
+	python -m build --wheel --config-setting=build_with_nuitka=false
+
+dist/$(PACKAGE)-${VERSION}.tar.gz: $(VENV_BIN_ACTIVATE) dist $(OBJ)
 	@. ${VENV_BIN_ACTIVATE}; \
 	python -m build --sdist
 
