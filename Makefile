@@ -186,7 +186,7 @@ lint: requirements-dev ## Lint the codebase
 	  fi; \
 	  echo "OKAY"; \
 	}; \
-	runtool ruff check; \
+	runtool ruff check --fix; \
 	for dir in rnhttp tests;do \
 	  for tool in basedpyright vulture;do \
 	    runtool "$$tool" "$$dir"; \
