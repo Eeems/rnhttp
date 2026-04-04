@@ -155,7 +155,9 @@ class HttpRequest:
         except HttptoolsParserError as e:
             raise HttpParserError(str(e)) from e
 
-        assert callbacks.message_completed
+        while not callbacks.message_completed:
+            pass
+
         method = parser.get_method()
         if not method:
             raise HttpParserError("Incomplete request")
@@ -293,7 +295,9 @@ class HttpResponse:
         except HttptoolsParserError as e:
             raise HttpParserError(str(e)) from e
 
-        assert callbacks.message_completed
+        while not callbacks.message_completed:
+            pass
+
         status = parser.get_status_code()
         if not status:
             raise HttpParserError("Incomplete response")
