@@ -16,5 +16,6 @@ except ImportError:
         override,  # pyright: ignore[reportUnknownVariableType,reportUnnecessaryTypeIgnoreComment]
     )
 
-override = cast(Callable[[Callable[..., Any]], Callable[..., Any]], override)  # pyright: ignore[reportExplicitAny]
+    override = cast(Callable[[Callable[..., Any]], Callable[..., Any]], override)  # pyright: ignore[reportExplicitAny]
+
 __all__ = ["override"]

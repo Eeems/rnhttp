@@ -2,7 +2,12 @@ import io
 import threading
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, cast
+from types import TracebackType
+from typing import (
+    TYPE_CHECKING,
+    Self,
+    final,
+)
 
 from httptools import (
     HttpRequestParser,
@@ -13,7 +18,10 @@ from httptools import (
 from ._compat import override
 
 if TYPE_CHECKING:
-    from _typeshed import WriteableBuffer
+    from _typeshed import (
+        ReadableBuffer,
+        WriteableBuffer,
+    )
 
 
 class URL:
@@ -35,6 +43,7 @@ class URL:
         self.fragment: bytes | None = fragment
         self.userinfo: bytes | None = userinfo
 
+    @override
     def __str__(self) -> str:
         return bytes(self).decode()
 
@@ -108,7 +117,7 @@ class Callbacks:
         self.ready_event.set()
 
     def on_url(self, url: bytes) -> None:
-        u = cast(URL, parse_url(url))
+        u = parse_url(url)
         self.url = URL(
             u.schema,
             u.host,
@@ -217,13 +226,29 @@ class Callbacks:
         return self.url_event.wait(timeout)
 
 
+@final
 class Request(io.RawIOBase):
     def __init__(self) -> None:
-        self.buffer = io.BytesIO()
-        self.callbacks = Callbacks(
+        # TODO remove data from buffer after it's been read
+        self.buffer: io.BytesIO = io.BytesIO()
+        self.callbacks: Callbacks = Callbacks(
             on_body=self._on_body, on_message_complete=self._on_message_complete
         )
-        self.parser = HttpRequestParser(self.callbacks)
+        self.parser: HttpRequestParser = HttpRequestParser(self.callbacks)
+
+    @override
+    def __enter__(self) -> Self:
+        return super().__enter__()
+
+    @override
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        self.buffer.close()
+        return super().__exit__(exc_type, exc_val, exc_tb)
 
     def _on_body(self, data: bytes) -> None:
         _ = self.buffer.write(data)
@@ -253,12 +278,12 @@ class Request(io.RawIOBase):
         raise ValueError("Unable to determine size")
 
     @override
-    def write(self, data: bytes) -> int:
-        self.parser.feed_data(data)
-        return len(data)
+    def write(self, data: ReadableBuffer, /) -> int:
+        self.parser.feed_data(memoryview(data))  # pyright: ignore[reportUnknownMemberType]
+        return len(data) if hasattr(data, "__len__") else -1  # pyright: ignore[reportArgumentType]
 
     @override
-    def read(self, size: int = -1) -> bytes:
+    def read(self, size: int = -1, /) -> bytes:
         _ = self.callbacks.wait_ready()
         self.callbacks.body_event.set()
         data = self.buffer.read(size)
@@ -266,12 +291,11 @@ class Request(io.RawIOBase):
         return data
 
     @override
-    def readall(self) -> bytes:
+    def readall(self, /) -> bytes:
         _ = self.callbacks.wait()
         return self.read(-1)
 
-    @override
-    def read1(self, size: int = -1) -> bytes:
+    def read1(self, size: int = -1, /) -> bytes:
         _ = self.callbacks.wait_ready()
         self.callbacks.body_event.set()
         data = self.buffer.read1(size)
@@ -279,7 +303,7 @@ class Request(io.RawIOBase):
         return data
 
     @override
-    def readline(self, size: int = -1) -> bytes:
+    def readline(self, size: int | None = -1, /) -> bytes:
         _ = self.callbacks.wait_ready()
         self.callbacks.body_event.set()
         data = self.buffer.readline(size)
@@ -287,7 +311,15 @@ class Request(io.RawIOBase):
         return data
 
     @override
-    def readinto(self, buffer: WriteableBuffer) -> int:
+    def readlines(self, hint: int = -1, /) -> list[bytes]:
+        _ = self.callbacks.wait_ready()
+        self.callbacks.body_event.set()
+        lines = self.buffer.readlines(hint)
+        self.callbacks.body_event.set()
+        return lines
+
+    @override
+    def readinto(self, buffer: WriteableBuffer, /) -> int:
         _ = self.callbacks.wait_ready()
         self.callbacks.body_event.set()
         res = self.buffer.readinto(buffer)
@@ -298,17 +330,17 @@ class Request(io.RawIOBase):
 if __name__ == "__main__":
     with io.BytesIO() as f:
 
-        def feed(p: HttpRequestParser):
+        def feed(p: HttpRequestParser) -> None:  # pyright: ignore[reportRedeclaration]
             time.sleep(0.1)
-            p.feed_data(b"GET /?test=1#test HTTP/1.1\r\n")
+            p.feed_data(b"GET /?test=1#test HTTP/1.1\r\n")  # pyright: ignore[reportUnknownMemberType]
             time.sleep(0.1)
-            p.feed_data(b"Host: example.com\r\n")
+            p.feed_data(b"Host: example.com\r\n")  # pyright: ignore[reportUnknownMemberType]
             time.sleep(0.1)
-            p.feed_data(b"Content-Length: 4\r\n")
+            p.feed_data(b"Content-Length: 4\r\n")  # pyright: ignore[reportUnknownMemberType]
             time.sleep(0.1)
-            p.feed_data(b"\r\n")
+            p.feed_data(b"\r\n")  # pyright: ignore[reportUnknownMemberType]
             time.sleep(0.1)
-            p.feed_data(b"test")
+            p.feed_data(b"test")  # pyright: ignore[reportUnknownMemberType]
 
         cb = Callbacks(on_body=lambda x: f.write(x))  # pyright: ignore[reportArgumentType]  # noqa: PLW0108
         p = HttpRequestParser(cb)
@@ -325,15 +357,15 @@ if __name__ == "__main__":
     thread.join()
     with io.BytesIO() as f:
 
-        def feed(p: HttpRequestParser):
+        def feed(p: HttpRequestParser) -> None:  # pyright: ignore[reportRedeclaration]
             time.sleep(0.1)
-            p.feed_data(b"HTTP/1.1 200 OK\r\n")
+            p.feed_data(b"HTTP/1.1 200 OK\r\n")  # pyright: ignore[reportUnknownMemberType]
             time.sleep(0.1)
-            p.feed_data(b"Content-Length: 13\r\n")
+            p.feed_data(b"Content-Length: 13\r\n")  # pyright: ignore[reportUnknownMemberType]
             time.sleep(0.1)
-            p.feed_data(b"\r\n")
+            p.feed_data(b"\r\n")  # pyright: ignore[reportUnknownMemberType]
             time.sleep(0.1)
-            p.feed_data(b"Hello, World!")
+            p.feed_data(b"Hello, World!")  # pyright: ignore[reportUnknownMemberType]
 
         print("HttpResponseParser")
         cb = Callbacks(on_body=lambda x: f.write(x))  # pyright: ignore[reportArgumentType]  # noqa: PLW0108
@@ -349,7 +381,7 @@ if __name__ == "__main__":
 
     thread.join()
 
-    def feed(request: Request):
+    def feed(request: Request) -> None:
         time.sleep(0.1)
         _ = request.write(b"GET /?test=1#test HTTP/1.1\r\n")
         time.sleep(0.1)
@@ -362,8 +394,9 @@ if __name__ == "__main__":
         _ = request.write(b"test")
 
     print("Request")
-    request = Request()
-    thread = threading.Thread(target=feed, args=(request,), daemon=True)
-    thread.start()
-    print(request.readall())
+    with Request() as request:
+        thread = threading.Thread(target=feed, args=(request,), daemon=True)
+        thread.start()
+        print(request.readall())
+
     thread.join()
