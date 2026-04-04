@@ -93,6 +93,7 @@ class Callbacks:
         self.url: URL | None = None
         self.status: bytes | None = None
         self.headers: dict[bytes, list[bytes]] = {}
+        self.size: int = 0
 
     def on_message_begin(self) -> None:
         self.status_event.clear()
@@ -121,6 +122,7 @@ class Callbacks:
             self._on_url(self.url)
 
     def on_header(self, name: bytes, value: bytes) -> None:
+        name = name.lower()
         if name not in self.headers:
             self.headers[name] = []
 
@@ -147,6 +149,8 @@ class Callbacks:
         _ = self.body_event.wait()
         if self._on_body:
             self._on_body(body)
+
+        self.size += len(body)
 
     def on_message_complete(self) -> None:
         if self._on_message_complete:
@@ -179,7 +183,6 @@ class Callbacks:
         self.status_event.set()
 
     def wait_ready(self, timeout: float | None = None) -> bool:
-        self.body_event.set()  # Allow on_body to process until the message is done
         return self.ready_event.wait(timeout)
 
     def wait(self, timeout: float | None = None) -> bool:
@@ -228,6 +231,26 @@ class Request(io.RawIOBase):
 
     def _on_message_complete(self) -> None:
         _ = self.buffer.write(b"")
+
+    @property
+    def headers(self) -> dict[bytes, list[bytes]]:
+        _ = self.callbacks.wait_headers()
+        return self.callbacks.headers
+
+    @property
+    def url(self) -> URL:
+        _ = self.callbacks.wait_url()
+        assert self.callbacks.url is not None
+        return self.callbacks.url
+
+    def __len__(self) -> int:
+        if b"content-length" in self.headers:
+            return int(self.headers[b"content-length"][0])
+
+        if self.callbacks.message_event.is_set():
+            return self.callbacks.size
+
+        raise ValueError("Unable to determine size")
 
     @override
     def write(self, data: bytes) -> int:
