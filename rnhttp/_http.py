@@ -391,6 +391,33 @@ class HttpSendTo:
     def statusline(self) -> bytes:
         raise NotImplementedError()
 
+    def add_header(self, name: str, value: str) -> None:
+        if name not in self.headers:
+            self.headers[name] = []
+
+        self.headers[name].append(value)
+
+    def set_header(self, name: str, value: str) -> None:
+        if name not in self.headers:
+            self.headers[name] = []
+
+        self.headers[name] = [value]
+
+    def get_headers(self, name: str) -> list[str]:
+        return self.headers.get(name, [])
+
+    def get_header(self, name: str) -> str | None:
+        values = self.get_headers(name)
+        match len(values):
+            case 0:
+                return None
+
+            case 1:
+                return values[0]
+
+            case _:
+                raise ValueError(f"Header {name} has more than one value")
+
     def sendto(self, stream: io.Writer[bytes]) -> None:
         body = self.body
         if isinstance(body, bytes):
@@ -454,12 +481,6 @@ class Request(HttpSendTo):
         self.url: URL = url
         if url.host is not None:
             self.headers["host"] = [url.host]
-
-    def header(self, name: str, value: str) -> None:
-        if name not in self.headers:
-            self.headers[name] = []
-
-        self.headers[name].append(value)
 
     @HttpSendTo.statusline.getter
     def statusline(self) -> bytes:
