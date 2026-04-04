@@ -1,10 +1,8 @@
 """Integration tests for rnhttp client/server over Reticulum."""
 
-import atexit
 import os
 import random
 import re
-import shutil
 import string
 import subprocess
 import sys
