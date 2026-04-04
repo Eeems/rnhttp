@@ -203,7 +203,6 @@ class HttpRequest:
         if body is not None:
             if headers.get("Transfer-Encoding", "").lower() == "chunked":
                 body = encode_chunked(body)
-                headers["Transfer-Encoding"] = "chunked"
                 _ = headers.pop("Content-Length", None)
 
             elif "Content-Length" not in headers:

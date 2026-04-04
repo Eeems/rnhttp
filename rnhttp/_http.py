@@ -1,7 +1,10 @@
 import io
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import (
+    Callable,
+    Sized,
+)
 from types import TracebackType
 from typing import (
     TYPE_CHECKING,
@@ -45,7 +48,10 @@ class URL:
 
     @override
     def __str__(self) -> str:
-        url = (self.schema or "http") + "://"
+        url = ""
+        if self.schema is not None:
+            url += self.schema + "://"
+
         if self.userinfo is not None:
             url += self.userinfo + "@"
 
@@ -103,6 +109,7 @@ class Callbacks:
         self.status: str | None = None
         self.headers: dict[str, list[str]] = {}
         self.size: int = 0
+        self.encoding: str = "us-ascii"
 
     def on_message_begin(self) -> None:
         self.status_event.clear()
@@ -119,23 +126,23 @@ class Callbacks:
     def on_url(self, url: bytes) -> None:
         u = parse_url(url)
         self.url = URL(
-            u.schema.decode() if u.schema is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
-            u.host.decode() if u.host is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
+            u.schema.decode(self.encoding) if u.schema is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
+            u.host.decode(self.encoding) if u.host is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
             u.port,
-            u.path.decode() if u.path is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
-            u.query.decode() if u.query is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
-            u.fragment.decode() if u.fragment is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
-            u.userinfo.decode() if u.userinfo is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
+            u.path.decode(self.encoding) if u.path is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
+            u.query.decode(self.encoding) if u.query is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
+            u.fragment.decode(self.encoding) if u.fragment is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
+            u.userinfo.decode(self.encoding) if u.userinfo is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
         )
         if self._on_url:
             self._on_url(self.url)
 
     def on_header(self, name: bytes, value: bytes) -> None:
-        name_str = name.decode().lower()
+        name_str = name.decode(self.encoding).lower()
         if name_str not in self.headers:
             self.headers[name_str] = []
 
-        value_str = value.decode()
+        value_str = value.decode(self.encoding)
         self.headers[name_str].append(value_str)
         if self._on_header:
             self._on_header(name_str, value_str)
@@ -186,7 +193,7 @@ class Callbacks:
         self.chunk_event.set()
 
     def on_status(self, status: bytes) -> None:
-        self.status = status.decode()
+        self.status = status.decode(self.encoding)
         if self._on_status:
             self._on_status(self.status)
 
@@ -238,6 +245,7 @@ class CallbacksIO(io.RawIOBase):
             on_body=self._on_body, on_message_complete=self._on_message_complete
         )
         self.parser: HttpRequestParser | HttpResponseParser = parser_cls(self.callbacks)
+        self.encoding: str = "us-ascii"
 
     @override
     def __enter__(self) -> Self:
@@ -325,7 +333,7 @@ class CallbacksIO(io.RawIOBase):
 
 
 @final
-class Request(CallbacksIO):
+class RequestIO(CallbacksIO):
     def __init__(self) -> None:
         super().__init__(HttpRequestParser)
 
@@ -339,11 +347,11 @@ class Request(CallbacksIO):
     def method(self) -> str:
         _ = self.callbacks.wait_ready()
         assert isinstance(self.parser, HttpRequestParser)
-        return self.parser.get_method().decode()
+        return self.parser.get_method().decode(self.encoding)
 
 
 @final
-class Response(CallbacksIO):
+class ResponseIO(CallbacksIO):
     def __init__(self) -> None:
         super().__init__(HttpResponseParser)
 
@@ -359,6 +367,156 @@ class Response(CallbacksIO):
         assert self.callbacks.status is not None
         assert isinstance(self.parser, HttpResponseParser)
         return self.parser.get_status_code()
+
+
+class HttpSendTo:
+    def __init__(self, body: io.Reader[bytes] | bytes | None) -> None:
+        self.headers: dict[str, list[str]] = {}
+        self._body: io.Reader[bytes] | bytes | None
+        self.body = body
+        self.encoding: str = "us-ascii"
+
+    @property
+    def body(self) -> io.Reader[bytes] | bytes | None:
+        return self._body
+
+    @body.setter
+    def body(self, body: io.Reader[bytes] | bytes | None) -> None:
+        if isinstance(body, bytes):
+            self.headers["content-length"] = [str(len(body))]
+
+        self._body = body
+
+    @property
+    def statusline(self) -> bytes:
+        raise NotImplementedError()
+
+    def sendto(self, stream: io.Writer[bytes]) -> None:
+        body = self.body
+        if isinstance(body, bytes):
+            body = io.BytesIO(body)
+
+        def flush() -> None:
+            if hasattr(stream, "flush") and isinstance(stream.flush, Callable):  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+                stream.flush()  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+
+        _ = stream.write(self.statusline)
+        transfer_encoding = self.headers.get("transfer-encoding", [""])[0].lower()
+        if transfer_encoding == "chunked":
+            _ = self.headers.pop("content-length", None)
+
+        elif isinstance(body, Sized):
+            self.headers["content-length"] = [str(len(body))]
+
+        elif "content-length" not in self.headers:
+            transfer_encoding = "chunked"
+            self.headers["transfer-encoding"] = ["chunked"]
+
+        for key, values in self.headers.items():
+            for value in values:
+                _ = stream.write(f"{key}: {value}\r\n".encode(self.encoding))
+
+        _ = stream.write(b"\r\n")
+
+        flush()
+        if body is not None:
+            while True:
+                chunk = body.read(4096)
+                if not chunk:
+                    break
+
+                if transfer_encoding == "chunked":
+                    _ = stream.write(
+                        f"{len(chunk):x}".encode() + b"\r\n" + chunk + b"\r\n"
+                    )
+
+                else:
+                    _ = stream.write(chunk)
+
+            if transfer_encoding == "chunked":
+                _ = stream.write(b"0" + b"\r\n\r\n")
+
+            flush()
+
+        _ = stream.write(b"")  # EOF
+        flush()
+
+
+class Request(HttpSendTo):
+    def __init__(
+        self,
+        method: str,
+        url: URL,
+        body: io.Reader[bytes] | bytes | None = None,
+    ) -> None:
+        super().__init__(body)
+        self.method: str = method
+        self.url: URL = url
+        if url.host is not None:
+            self.headers["host"] = [url.host]
+
+    def header(self, name: str, value: str) -> None:
+        if name not in self.headers:
+            self.headers[name] = []
+
+        self.headers[name].append(value)
+
+    @HttpSendTo.statusline.getter
+    def statusline(self) -> bytes:
+        url = URL(path=self.url.path, query=self.url.query)
+        return f"{self.method} {url} HTTP/1.1\r\n".encode(self.encoding)
+
+
+class Response(HttpSendTo):
+    @staticmethod
+    def reason_text(status: int) -> str:
+        """Return default reason phrase for status code."""
+        reasons = {
+            100: "Continue",
+            101: "Switching Protocols",
+            200: "OK",
+            201: "Created",
+            202: "Accepted",
+            204: "No Content",
+            301: "Moved Permanently",
+            302: "Found",
+            304: "Not Modified",
+            400: "Bad Request",
+            401: "Unauthorized",
+            403: "Forbidden",
+            404: "Not Found",
+            405: "Method Not Allowed",
+            408: "Request Timeout",
+            409: "Conflict",
+            413: "Payload Too Large",
+            414: "URI Too Long",
+            500: "Internal Server Error",
+            501: "Not Implemented",
+            502: "Bad Gateway",
+            503: "Service Unavailable",
+            504: "Gateway Timeout",
+        }
+        return reasons.get(status, "Unknown")
+
+    def __init__(
+        self,
+        status: int,
+        reason: str | None = None,
+        body: io.Reader[bytes] | bytes | None = None,
+    ) -> None:
+        super().__init__(body)
+        self.status: int = status
+        self.reason: str = reason or Response.reason_text(status)
+
+    def header(self, name: str, value: str) -> None:
+        if name not in self.headers:
+            self.headers[name] = []
+
+        self.headers[name].append(value)
+
+    @HttpSendTo.statusline.getter
+    def statusline(self) -> bytes:
+        return f"HTTP/1.1 {self.status} {self.reason}\r\n".encode(self.encoding)
 
 
 if __name__ == "__main__":
@@ -415,7 +573,7 @@ if __name__ == "__main__":
 
     thread.join()
 
-    def feed(request: Request) -> None:
+    def feed(request: RequestIO) -> None:  # pyright: ignore[reportRedeclaration]
         time.sleep(0.1)
         _ = request.write(b"GET /?test=1#test HTTP/1.1\r\n")
         time.sleep(0.1)
@@ -428,16 +586,17 @@ if __name__ == "__main__":
         _ = request.write(b"test")
 
     print("Request()")
-    with Request() as request:
+    with RequestIO() as request:
         thread = threading.Thread(target=feed, args=(request,), daemon=True)
         thread.start()
-        print(request.readall())
         print(request.url)
         print(request.method)
+        print(request.headers)
+        print(request.readall())
 
     thread.join()
 
-    def feed(response: Response) -> None:
+    def feed(response: ResponseIO) -> None:  # pyright: ignore[reportRedeclaration]
         time.sleep(0.1)
         _ = response.write(b"HTTP/1.1 200 OK\r\n")
         time.sleep(0.1)
@@ -448,11 +607,80 @@ if __name__ == "__main__":
         _ = response.write(b"Hello, World!")
 
     print("Response()")
-    with Response() as response:
+    with ResponseIO() as response:
         thread = threading.Thread(target=feed, args=(response,), daemon=True)
         thread.start()
-        print(response.readall())
         print(response.status)
         print(response.reason)
+        print(response.headers)
+        print(response.readall())
+
+    thread.join()
+
+    def feed(request: RequestIO) -> None:  # pyright: ignore[reportRedeclaration]
+        time.sleep(0.1)
+        Request(
+            "GET",
+            URL(host="example.com", path="/", query="test=1", fragment="test"),
+            b"test",
+        ).sendto(request)
+
+    print("Request()")
+    with RequestIO() as request:
+        thread = threading.Thread(target=feed, args=(request,), daemon=True)
+        thread.start()
+        print(request.url)
+        print(request.method)
+        print(request.headers)
+        print(request.readall())
+
+    thread.join()
+
+    def feed(request: RequestIO) -> None:  # pyright: ignore[reportRedeclaration]
+        time.sleep(0.1)
+        Request(
+            "GET",
+            URL(host="example.com", path="/", query="test=1", fragment="test"),
+            io.BytesIO(b"test"),
+        ).sendto(request)
+
+    print("Request() # chunked")
+    with RequestIO() as request:
+        thread = threading.Thread(target=feed, args=(request,), daemon=True)
+        thread.start()
+        print(request.url)
+        print(request.method)
+        print(request.headers)
+        print(request.readall())
+
+    thread.join()
+
+    def feed(response: ResponseIO) -> None:  # pyright: ignore[reportRedeclaration]
+        time.sleep(0.1)
+        Response(200, body=b"test").sendto(response)
+
+    print("Response()")
+    with ResponseIO() as response:
+        thread = threading.Thread(target=feed, args=(response,), daemon=True)
+        thread.start()
+        print(response.status)
+        print(response.reason)
+        print(response.headers)
+        print(response.readall())
+
+    thread.join()
+
+    def feed(response: ResponseIO) -> None:
+        time.sleep(0.1)
+        Response(200, body=io.BytesIO(b"test")).sendto(response)
+
+    print("Response() # chunked")
+    with ResponseIO() as response:
+        thread = threading.Thread(target=feed, args=(response,), daemon=True)
+        thread.start()
+        print(response.status)
+        print(response.reason)
+        print(response.headers)
+        print(response.readall())
 
     thread.join()
