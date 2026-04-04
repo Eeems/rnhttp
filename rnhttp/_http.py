@@ -27,47 +27,47 @@ if TYPE_CHECKING:
 class URL:
     def __init__(
         self,
-        schema: bytes | None = None,
-        host: bytes | None = None,
+        schema: str | None = None,
+        host: str | None = None,
         port: int | None = None,
-        path: bytes | None = None,
-        query: bytes | None = None,
-        fragment: bytes | None = None,
-        userinfo: bytes | None = None,
+        path: str | None = None,
+        query: str | None = None,
+        fragment: str | None = None,
+        userinfo: str | None = None,
     ) -> None:
-        self.schema: bytes | None = schema
-        self.host: bytes | None = host
+        self.schema: str | None = schema
+        self.host: str | None = host
         self.port: int | None = port
-        self.path: bytes | None = path
-        self.query: bytes | None = query
-        self.fragment: bytes | None = fragment
-        self.userinfo: bytes | None = userinfo
+        self.path: str | None = path
+        self.query: str | None = query
+        self.fragment: str | None = fragment
+        self.userinfo: str | None = userinfo
 
     @override
     def __str__(self) -> str:
-        return bytes(self).decode()
-
-    def __bytes__(self) -> bytes:
-        url = (self.schema or b"http") + b"://"
+        url = (self.schema or "http") + "://"
         if self.userinfo is not None:
-            url += self.userinfo + b"@"
+            url += self.userinfo + "@"
 
         if self.host is not None:
             url += self.host
 
         if self.port is not None:
-            url += b":" + str(self.port).encode()
+            url += ":" + str(self.port)
 
         if self.path is not None:
             url += self.path
 
         if self.query is not None:
-            url += b"?" + self.query
+            url += "?" + self.query
 
         if self.fragment is not None:
-            url += b"#" + self.fragment
+            url += "#" + self.fragment
 
         return url
+
+    def __bytes__(self) -> bytes:
+        return str(self).encode()
 
 
 class Callbacks:
@@ -75,23 +75,23 @@ class Callbacks:
         self,
         on_message_begin: Callable[[], None] | None = None,
         on_url: Callable[[URL], None] | None = None,
-        on_header: Callable[[bytes, bytes], None] | None = None,
+        on_header: Callable[[str, str], None] | None = None,
         on_headers_complete: Callable[[], None] | None = None,
         on_body: Callable[[bytes], None] | None = None,
         on_message_complete: Callable[[], None] | None = None,
         on_chunk_header: Callable[[], None] | None = None,
         on_chunk_complete: Callable[[], None] | None = None,
-        on_status: Callable[[bytes], None] | None = None,
+        on_status: Callable[[str], None] | None = None,
     ) -> None:
         self._on_message_begin: Callable[[], None] | None = on_message_begin
         self._on_url: Callable[[URL], None] | None = on_url
-        self._on_header: Callable[[bytes, bytes], None] | None = on_header
+        self._on_header: Callable[[str, str], None] | None = on_header
         self._on_headers_complete: Callable[[], None] | None = on_headers_complete
         self._on_body: Callable[[bytes], None] | None = on_body
         self._on_message_complete: Callable[[], None] | None = on_message_complete
         self._on_chunk_header: Callable[[], None] | None = on_chunk_header
         self._on_chunk_complete: Callable[[], None] | None = on_chunk_complete
-        self._on_status: Callable[[bytes], None] | None = on_status
+        self._on_status: Callable[[str], None] | None = on_status
         self.ready_event: threading.Event = threading.Event()
         self.message_event: threading.Event = threading.Event()
         self.body_event: threading.Event = threading.Event()
@@ -100,8 +100,8 @@ class Callbacks:
         self.status_event: threading.Event = threading.Event()
         self.url_event: threading.Event = threading.Event()
         self.url: URL | None = None
-        self.status: bytes | None = None
-        self.headers: dict[bytes, list[bytes]] = {}
+        self.status: str | None = None
+        self.headers: dict[str, list[str]] = {}
         self.size: int = 0
 
     def on_message_begin(self) -> None:
@@ -119,30 +119,31 @@ class Callbacks:
     def on_url(self, url: bytes) -> None:
         u = parse_url(url)
         self.url = URL(
-            u.schema,
-            u.host,
+            u.schema.decode() if u.schema is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
+            u.host.decode() if u.host is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
             u.port,
-            u.path,
-            u.query,
-            u.fragment,
-            u.userinfo,
+            u.path.decode() if u.path is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
+            u.query.decode() if u.query is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
+            u.fragment.decode() if u.fragment is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
+            u.userinfo.decode() if u.userinfo is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
         )
         if self._on_url:
             self._on_url(self.url)
 
     def on_header(self, name: bytes, value: bytes) -> None:
-        name = name.lower()
-        if name not in self.headers:
-            self.headers[name] = []
+        name_str = name.decode().lower()
+        if name_str not in self.headers:
+            self.headers[name_str] = []
 
-        self.headers[name].append(value)
+        value_str = value.decode()
+        self.headers[name_str].append(value_str)
         if self._on_header:
-            self._on_header(name, value)
+            self._on_header(name_str, value_str)
 
-        match name.lower():
-            case b"host":
+        match name_str:
+            case "host":
                 assert self.url is not None
-                self.url.host = value
+                self.url.host = value_str
                 self.url_event.set()
 
             case _:
@@ -185,9 +186,9 @@ class Callbacks:
         self.chunk_event.set()
 
     def on_status(self, status: bytes) -> None:
-        self.status = status
+        self.status = status.decode()
         if self._on_status:
-            self._on_status(status)
+            self._on_status(self.status)
 
         self.status_event.set()
 
@@ -260,13 +261,13 @@ class CallbacksIO(io.RawIOBase):
         _ = self.buffer.write(b"")
 
     @property
-    def headers(self) -> dict[bytes, list[bytes]]:
+    def headers(self) -> dict[str, list[str]]:
         _ = self.callbacks.wait_headers()
         return self.callbacks.headers
 
     def __len__(self) -> int:
-        if b"content-length" in self.headers:
-            return int(self.headers[b"content-length"][0])
+        if "content-length" in self.headers:
+            return int(self.headers["content-length"][0])
 
         if self.callbacks.message_event.is_set():
             return self.callbacks.size
@@ -334,6 +335,12 @@ class Request(CallbacksIO):
         assert self.callbacks.url is not None
         return self.callbacks.url
 
+    @property
+    def method(self) -> str:
+        _ = self.callbacks.wait_ready()
+        assert isinstance(self.parser, HttpRequestParser)
+        return self.parser.get_method().decode()
+
 
 @final
 class Response(CallbacksIO):
@@ -341,10 +348,17 @@ class Response(CallbacksIO):
         super().__init__(HttpResponseParser)
 
     @property
-    def status(self) -> bytes:
+    def reason(self) -> str:
         _ = self.callbacks.wait_status()
         assert self.callbacks.status is not None
         return self.callbacks.status
+
+    @property
+    def status(self) -> int:
+        _ = self.callbacks.wait_status()
+        assert self.callbacks.status is not None
+        assert isinstance(self.parser, HttpResponseParser)
+        return self.parser.get_status_code()
 
 
 if __name__ == "__main__":
@@ -418,6 +432,8 @@ if __name__ == "__main__":
         thread = threading.Thread(target=feed, args=(request,), daemon=True)
         thread.start()
         print(request.readall())
+        print(request.url)
+        print(request.method)
 
     thread.join()
 
@@ -436,5 +452,7 @@ if __name__ == "__main__":
         thread = threading.Thread(target=feed, args=(response,), daemon=True)
         thread.start()
         print(response.readall())
+        print(response.status)
+        print(response.reason)
 
     thread.join()
