@@ -226,15 +226,17 @@ class Callbacks:
         return self.url_event.wait(timeout)
 
 
-@final
-class Request(io.RawIOBase):
-    def __init__(self) -> None:
+class CallbacksIO(io.RawIOBase):
+    def __init__(
+        self,
+        parser_cls: type[HttpRequestParser | HttpResponseParser],
+    ) -> None:
         # TODO remove data from buffer after it's been read
         self.buffer: io.BytesIO = io.BytesIO()
         self.callbacks: Callbacks = Callbacks(
             on_body=self._on_body, on_message_complete=self._on_message_complete
         )
-        self.parser: HttpRequestParser = HttpRequestParser(self.callbacks)
+        self.parser: HttpRequestParser | HttpResponseParser = parser_cls(self.callbacks)
 
     @override
     def __enter__(self) -> Self:
@@ -261,12 +263,6 @@ class Request(io.RawIOBase):
     def headers(self) -> dict[bytes, list[bytes]]:
         _ = self.callbacks.wait_headers()
         return self.callbacks.headers
-
-    @property
-    def url(self) -> URL:
-        _ = self.callbacks.wait_url()
-        assert self.callbacks.url is not None
-        return self.callbacks.url
 
     def __len__(self) -> int:
         if b"content-length" in self.headers:
@@ -327,6 +323,30 @@ class Request(io.RawIOBase):
         return res
 
 
+@final
+class Request(CallbacksIO):
+    def __init__(self) -> None:
+        super().__init__(HttpRequestParser)
+
+    @property
+    def url(self) -> URL:
+        _ = self.callbacks.wait_url()
+        assert self.callbacks.url is not None
+        return self.callbacks.url
+
+
+@final
+class Response(CallbacksIO):
+    def __init__(self) -> None:
+        super().__init__(HttpResponseParser)
+
+    @property
+    def status(self) -> bytes:
+        _ = self.callbacks.wait_status()
+        assert self.callbacks.status is not None
+        return self.callbacks.status
+
+
 if __name__ == "__main__":
     with io.BytesIO() as f:
 
@@ -346,7 +366,7 @@ if __name__ == "__main__":
         p = HttpRequestParser(cb)
         thread = threading.Thread(target=feed, args=(p,), daemon=True)
         thread.start()
-        print("HttpRequestParser")
+        print("HttpRequestParser()")
         _ = cb.wait_url()
         print(cb.url)
         _ = cb.wait_headers()
@@ -367,7 +387,7 @@ if __name__ == "__main__":
             time.sleep(0.1)
             p.feed_data(b"Hello, World!")  # pyright: ignore[reportUnknownMemberType]
 
-        print("HttpResponseParser")
+        print("HttpResponseParser()")
         cb = Callbacks(on_body=lambda x: f.write(x))  # pyright: ignore[reportArgumentType]  # noqa: PLW0108
         p = HttpResponseParser(cb)
         thread = threading.Thread(target=feed, args=(p,), daemon=True)
@@ -393,10 +413,28 @@ if __name__ == "__main__":
         time.sleep(0.1)
         _ = request.write(b"test")
 
-    print("Request")
+    print("Request()")
     with Request() as request:
         thread = threading.Thread(target=feed, args=(request,), daemon=True)
         thread.start()
         print(request.readall())
+
+    thread.join()
+
+    def feed(response: Response) -> None:
+        time.sleep(0.1)
+        _ = response.write(b"HTTP/1.1 200 OK\r\n")
+        time.sleep(0.1)
+        _ = response.write(b"Content-Length: 13\r\n")
+        time.sleep(0.1)
+        _ = response.write(b"\r\n")
+        time.sleep(0.1)
+        _ = response.write(b"Hello, World!")
+
+    print("Response()")
+    with Response() as response:
+        thread = threading.Thread(target=feed, args=(response,), daemon=True)
+        thread.start()
+        print(response.readall())
 
     thread.join()

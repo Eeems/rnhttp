@@ -1,4 +1,4 @@
-_.wait_chunk  # unused method (rnhttp/_client.py:210)
+_.wait_chunk  # unused method (rnhttp/_http.py:210)
 _.post  # unused method (rnhttp/client.py:192)
 _.put  # unused method (rnhttp/client.py:201)
 _.delete  # unused method (rnhttp/client.py:210)
