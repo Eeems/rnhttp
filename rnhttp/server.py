@@ -117,8 +117,8 @@ class HttpServer:
         )
 
         self._running = True
-        _ = self._destination.accepts_links(True)  # pyright: ignore[reportUnknownMemberType]
         self._destination.set_link_established_callback(self._on_link)  # pyright: ignore[reportUnknownMemberType]
+        _ = self._destination.accepts_links(True)  # pyright: ignore[reportUnknownMemberType]
         _ = self._destination.announce()  # pyright: ignore[reportUnknownMemberType]
 
     async def stop(self) -> None:

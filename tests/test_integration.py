@@ -50,59 +50,101 @@ _rnsd_config_dir: Path | None = None
 def shared_rnsd() -> Generator[Path, Any, None]:  # pyright: ignore[reportExplicitAny]
     global _rnsd_process
     global _rnsd_config_dir
-    config_dir = Path(tempfile.mkdtemp())
-    _ = atexit.register(lambda: shutil.rmtree(config_dir))
-    rns_config = config_dir / "config"
-    _ = rns_config.write_text(RETICULUM_CONFIG)
+    with tempfile.TemporaryDirectory() as config_dir:
+        rns_config = os.path.join(config_dir, "config")
+        with open(rns_config, "w") as f:
+            _ = f.write(RETICULUM_CONFIG)
 
-    tries = 3
-    timeout = 5
-    start = time.time()
-    rnsd_proc = None
-    remaining = tries
-    while True:
-        if rnsd_proc is None:
-            rnsd_proc = subprocess.Popen(
+        tries = 3
+        timeout = 5
+        start = time.time()
+        rnsd_proc = None
+        remaining = tries
+        while True:
+            if rnsd_proc is None:
+                rnsd_proc = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "RNS.Utilities.rnsd",
+                        "--config",
+                        str(config_dir),
+                        "-vvv",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
+
+            if rnsd_proc.poll() is not None:
+                stdout = (
+                    rnsd_proc.stdout.read().decode()
+                    if rnsd_proc.stdout is not None
+                    else ""
+                )
+                raise SetupError(
+                    f"RNS shared instance exited early: {rnsd_proc.returncode}"
+                    + f"\n  stdout: {stdout}"
+                )
+
+            proc = subprocess.run(
                 [
                     sys.executable,
                     "-m",
-                    "RNS.Utilities.rnsd",
+                    "RNS.Utilities.rnstatus",
                     "--config",
                     str(config_dir),
-                    "-vvv",
+                    "-a",
                 ],
-                stdout=subprocess.PIPE,
+                stdin=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
             )
+            if not proc.returncode:
+                break
 
-        if rnsd_proc.poll() is not None:
+            if time.time() - start < timeout:
+                continue
+
+            rnsd_proc.terminate()
+            try:
+                _ = rnsd_proc.wait(timeout=5)
+
+            except subprocess.TimeoutExpired:
+                rnsd_proc.kill()
+                _ = rnsd_proc.wait()
+
+            if remaining:
+                rnsd_proc = None
+                remaining -= 1
+                start = time.time()
+                continue
+
             stdout = (
                 rnsd_proc.stdout.read().decode() if rnsd_proc.stdout is not None else ""
             )
             raise SetupError(
-                f"RNS shared instance exited early: {rnsd_proc.returncode}"
+                f"RNS shared instance failed to start in {tries} tries..."
                 + f"\n  stdout: {stdout}"
+                + f"\n  rnstatus: {proc.returncode} {proc.stdout or ''}"
             )
 
-        proc = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "RNS.Utilities.rnstatus",
-                "--config",
-                str(config_dir),
-                "-a",
-            ],
-            stdin=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=False,
-        )
-        if not proc.returncode:
-            break
+        def fn(proc: subprocess.Popen[str]) -> None:
+            while proc.poll() is None:
+                for f in (proc.stdout, proc.stderr):
+                    if f is None:
+                        continue
 
-        if time.time() - start < timeout:
-            continue
+                    line = f.readline()
+                    if line:
+                        print(f"rnsd: {line}", file=sys.stderr, end="")
+
+        threading.Thread(target=fn, args=(rnsd_proc,), daemon=True).start()
+
+        _rnsd_process = rnsd_proc
+        _rnsd_config_dir = Path(config_dir)
+
+        yield _rnsd_config_dir
 
         rnsd_proc.terminate()
         try:
@@ -111,46 +153,6 @@ def shared_rnsd() -> Generator[Path, Any, None]:  # pyright: ignore[reportExplic
         except subprocess.TimeoutExpired:
             rnsd_proc.kill()
             _ = rnsd_proc.wait()
-
-        if remaining:
-            rnsd_proc = None
-            remaining -= 1
-            start = time.time()
-            continue
-
-        stdout = (
-            rnsd_proc.stdout.read().decode() if rnsd_proc.stdout is not None else ""
-        )
-        raise SetupError(
-            f"RNS shared instance failed to start in {tries} tries..."
-            + f"\n  stdout: {stdout}"
-            + f"\n  rnstatus: {proc.returncode} {proc.stdout or ''}"
-        )
-
-    def fn(proc: subprocess.Popen[str]) -> None:
-        while proc.poll() is None:
-            for f in (proc.stdout, proc.stderr):
-                if f is None:
-                    continue
-
-                line = f.readline()
-                if line:
-                    print(f"rnsd: {line}", file=sys.stderr, end="")
-
-    threading.Thread(target=fn, args=(rnsd_proc,), daemon=True).start()
-
-    _rnsd_process = rnsd_proc
-    _rnsd_config_dir = config_dir
-
-    yield config_dir
-
-    rnsd_proc.terminate()
-    try:
-        _ = rnsd_proc.wait(timeout=5)
-
-    except subprocess.TimeoutExpired:
-        rnsd_proc.kill()
-        _ = rnsd_proc.wait()
 
 
 class HttpIntegrationStack:
@@ -248,7 +250,7 @@ class HttpIntegrationStack:
         result = subprocess.run(
             [
                 sys.executable,
-                "-m",
+                "-um",
                 "rnhttp.client",
                 *(["--response-code"] if response_code else []),
                 f"--config={self.rns_config}",

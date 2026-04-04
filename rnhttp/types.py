@@ -37,9 +37,14 @@ class RequestCallbacks:
         self.version: bytes = b"HTTP/1.1"
         self.headers: dict[bytes, bytes] = {}
         self.body_chunks: list[bytes] = []
+        self.headers_complete: bool = False
+        self.message_completed: bool = False
 
     def on_message_begin(self) -> None:
         pass
+
+    def on_message_complete(self) -> None:
+        self.message_completed = True
 
     def on_method(self, method: bytes) -> None:
         self.method = method
@@ -52,6 +57,9 @@ class RequestCallbacks:
 
     def on_header(self, name: bytes, value: bytes) -> None:
         self.headers[name] = value
+
+    def on_headers_complete(self) -> None:
+        self.headers_complete = True
 
     def on_body(self, body: bytes) -> None:
         self.body_chunks.append(body)
@@ -66,9 +74,14 @@ class ResponseCallbacks:
         self.reason: bytes = b""
         self.headers: dict[bytes, bytes] = {}
         self.body_chunks: list[bytes] = []
+        self.headers_complete: bool = False
+        self.message_completed: bool = False
 
     def on_message_begin(self) -> None:
         pass
+
+    def on_message_complete(self) -> None:
+        self.message_completed = True
 
     def on_version(self, version: bytes) -> None:
         self.version = version
@@ -81,6 +94,9 @@ class ResponseCallbacks:
 
     def on_header(self, name: bytes, value: bytes) -> None:
         self.headers[name] = value
+
+    def on_headers_complete(self) -> None:
+        self.headers_complete = True
 
     def on_body(self, body: bytes) -> None:
         self.body_chunks.append(body)
@@ -139,6 +155,7 @@ class HttpRequest:
         except HttptoolsParserError as e:
             raise HttpParserError(str(e)) from e
 
+        assert callbacks.message_completed
         method = parser.get_method()
         if not method:
             raise HttpParserError("Incomplete request")
@@ -276,6 +293,7 @@ class HttpResponse:
         except HttptoolsParserError as e:
             raise HttpParserError(str(e)) from e
 
+        assert callbacks.message_completed
         status = parser.get_status_code()
         if not status:
             raise HttpParserError("Incomplete response")
