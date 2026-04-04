@@ -2,12 +2,18 @@ import io
 import threading
 import time
 from collections.abc import Callable
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from httptools import (
     HttpRequestParser,
+    HttpResponseParser,
     parse_url,  # pyright: ignore[reportUnknownVariableType]
 )
+
+from ._compat import override
+
+if TYPE_CHECKING:
+    from _typeshed import WriteableBuffer
 
 
 class URL:
@@ -77,7 +83,9 @@ class Callbacks:
         self._on_chunk_header: Callable[[], None] | None = on_chunk_header
         self._on_chunk_complete: Callable[[], None] | None = on_chunk_complete
         self._on_status: Callable[[bytes], None] | None = on_status
+        self.ready_event: threading.Event = threading.Event()
         self.message_event: threading.Event = threading.Event()
+        self.body_event: threading.Event = threading.Event()
         self.header_event: threading.Event = threading.Event()
         self.chunk_event: threading.Event = threading.Event()
         self.status_event: threading.Event = threading.Event()
@@ -91,9 +99,12 @@ class Callbacks:
         self.url_event.clear()
         self.header_event.clear()
         self.chunk_event.clear()
+        self.body_event.clear()
         self.message_event.clear()
         if self._on_message_begin:
             self._on_message_begin()
+
+        self.ready_event.set()
 
     def on_url(self, url: bytes) -> None:
         u = cast(URL, parse_url(url))
@@ -133,6 +144,7 @@ class Callbacks:
         self.header_event.set()
 
     def on_body(self, body: bytes) -> None:
+        _ = self.body_event.wait()
         if self._on_body:
             self._on_body(body)
 
@@ -144,6 +156,7 @@ class Callbacks:
         self.url_event.set()
         self.header_event.set()
         self.chunk_event.set()
+        self.body_event.set()
         self.message_event.set()
 
     def on_chunk_header(self) -> None:
@@ -165,26 +178,102 @@ class Callbacks:
 
         self.status_event.set()
 
+    def wait_ready(self, timeout: float | None = None) -> bool:
+        self.body_event.set()  # Allow on_body to process until the message is done
+        return self.ready_event.wait(timeout)
+
     def wait(self, timeout: float | None = None) -> bool:
+        if not self.wait_ready(timeout):
+            return False
+
+        self.body_event.set()  # Allow on_body to process until the message is done
         return self.message_event.wait(timeout)
 
     def wait_headers(self, timeout: float | None = None) -> bool:
+        if not self.wait_ready(timeout):
+            return False
+
         return self.header_event.wait(timeout)
 
     def wait_chunk(self, timeout: float | None = None) -> bool:
+        if not self.wait_ready(timeout):
+            return False
+
         return self.chunk_event.wait(timeout)
 
     def wait_status(self, timeout: float | None = None) -> bool:
+        if not self.wait_ready(timeout):
+            return False
+
         return self.status_event.wait(timeout)
 
     def wait_url(self, timeout: float | None = None) -> bool:
+        if not self.wait_ready(timeout):
+            return False
+
         return self.url_event.wait(timeout)
+
+
+class Request(io.RawIOBase):
+    def __init__(self) -> None:
+        self.buffer = io.BytesIO()
+        self.callbacks = Callbacks(
+            on_body=self._on_body, on_message_complete=self._on_message_complete
+        )
+        self.parser = HttpRequestParser(self.callbacks)
+
+    def _on_body(self, data: bytes) -> None:
+        _ = self.buffer.write(data)
+        _ = self.buffer.seek(-len(data), io.SEEK_CUR)
+
+    def _on_message_complete(self) -> None:
+        _ = self.buffer.write(b"")
+
+    @override
+    def write(self, data: bytes) -> int:
+        self.parser.feed_data(data)
+        return len(data)
+
+    @override
+    def read(self, size: int = -1) -> bytes:
+        _ = self.callbacks.wait_ready()
+        self.callbacks.body_event.set()
+        data = self.buffer.read(size)
+        self.callbacks.body_event.clear()
+        return data
+
+    @override
+    def readall(self) -> bytes:
+        _ = self.callbacks.wait()
+        return self.read(-1)
+
+    @override
+    def read1(self, size: int = -1) -> bytes:
+        _ = self.callbacks.wait_ready()
+        self.callbacks.body_event.set()
+        data = self.buffer.read1(size)
+        self.callbacks.body_event.set()
+        return data
+
+    @override
+    def readline(self, size: int = -1) -> bytes:
+        _ = self.callbacks.wait_ready()
+        self.callbacks.body_event.set()
+        data = self.buffer.readline(size)
+        self.callbacks.body_event.set()
+        return data
+
+    @override
+    def readinto(self, buffer: WriteableBuffer) -> int:
+        _ = self.callbacks.wait_ready()
+        self.callbacks.body_event.set()
+        res = self.buffer.readinto(buffer)
+        self.callbacks.body_event.set()
+        return res
 
 
 if __name__ == "__main__":
     with io.BytesIO() as f:
-        cb = Callbacks(on_body=lambda x: f.write(x))  # pyright: ignore[reportArgumentType]  # noqa: PLW0108
-        p = HttpRequestParser(cb)
 
         def feed(p: HttpRequestParser):
             time.sleep(0.1)
@@ -198,12 +287,60 @@ if __name__ == "__main__":
             time.sleep(0.1)
             p.feed_data(b"test")
 
+        cb = Callbacks(on_body=lambda x: f.write(x))  # pyright: ignore[reportArgumentType]  # noqa: PLW0108
+        p = HttpRequestParser(cb)
         thread = threading.Thread(target=feed, args=(p,), daemon=True)
         thread.start()
+        print("HttpRequestParser")
         _ = cb.wait_url()
         print(cb.url)
         _ = cb.wait_headers()
         print(cb.headers)
         _ = cb.wait()
         print(f.getvalue())
-        thread.join()
+
+    thread.join()
+    with io.BytesIO() as f:
+
+        def feed(p: HttpRequestParser):
+            time.sleep(0.1)
+            p.feed_data(b"HTTP/1.1 200 OK\r\n")
+            time.sleep(0.1)
+            p.feed_data(b"Content-Length: 13\r\n")
+            time.sleep(0.1)
+            p.feed_data(b"\r\n")
+            time.sleep(0.1)
+            p.feed_data(b"Hello, World!")
+
+        print("HttpResponseParser")
+        cb = Callbacks(on_body=lambda x: f.write(x))  # pyright: ignore[reportArgumentType]  # noqa: PLW0108
+        p = HttpResponseParser(cb)
+        thread = threading.Thread(target=feed, args=(p,), daemon=True)
+        thread.start()
+        _ = cb.wait_status()
+        print(cb.status)
+        _ = cb.wait_headers()
+        print(cb.headers)
+        _ = cb.wait()
+        print(f.getvalue())
+
+    thread.join()
+
+    def feed(request: Request):
+        time.sleep(0.1)
+        _ = request.write(b"GET /?test=1#test HTTP/1.1\r\n")
+        time.sleep(0.1)
+        _ = request.write(b"Host: example.com\r\n")
+        time.sleep(0.1)
+        _ = request.write(b"Content-Length: 4\r\n")
+        time.sleep(0.1)
+        _ = request.write(b"\r\n")
+        time.sleep(0.1)
+        _ = request.write(b"test")
+
+    print("Request")
+    request = Request()
+    thread = threading.Thread(target=feed, args=(request,), daemon=True)
+    thread.start()
+    print(request.readall())
+    thread.join()
