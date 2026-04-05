@@ -265,9 +265,10 @@ class TestBackpressure:
 
             # Drain buffer to let writer proceed
             while not write_completed.is_set():
-                data = pipe.read(-1)
-                total_read[0] += len(data)
-                if not data:
+                if pipe._available > 0:  # pyright: ignore[reportPrivateUsage]
+                    data = pipe.read(-1)
+                    total_read[0] += len(data)
+                else:
                     time.sleep(0.01)
 
             # Read any remaining data
@@ -312,11 +313,11 @@ class TestLargePayloadStreaming:
 
         try:
             while not done.is_set() or pipe._available > 0:  # pyright: ignore[reportPrivateUsage]
-                data = pipe.read(-1)
-                if not data:
+                if pipe._available > 0:  # pyright: ignore[reportPrivateUsage]
+                    data = pipe.read(-1)
+                    read_total += len(data)
+                else:
                     time.sleep(0.01)
-                    continue
-                read_total += len(data)
 
             write_thread.join(timeout=10)
             assert write_thread.is_alive() is False
@@ -353,11 +354,11 @@ class TestLargePayloadStreaming:
             write_thread.start()
 
             while not done.is_set() or pipe._available > 0:  # pyright: ignore[reportPrivateUsage]
-                data = pipe.read(-1)
-                if not data:
+                if pipe._available > 0:  # pyright: ignore[reportPrivateUsage]
+                    data = pipe.read(-1)
+                    read_total += len(data)
+                else:
                     time.sleep(0.01)
-                    continue
-                read_total += len(data)
 
             write_thread.join(timeout=5)
             assert write_thread.is_alive() is False

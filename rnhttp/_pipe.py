@@ -28,7 +28,7 @@ class PipeIO(io.RawIOBase):
     @override
     def write(self, data: "ReadableBuffer", /) -> int:
         data = cast(
-            memoryview[bytes],
+            memoryview,
             data if isinstance(data, memoryview) else memoryview(data),
         )
         length = len(data)
@@ -46,15 +46,15 @@ class PipeIO(io.RawIOBase):
             avail = self._capacity - write_pos
 
             if chunk_size <= avail:
-                self._buffer[write_pos : write_pos + chunk_size] = data[  # pyright: ignore[reportCallIssue, reportArgumentType]
+                self._buffer[write_pos : write_pos + chunk_size] = data[
                     offset : offset + chunk_size
                 ]
                 self._write_pos = (write_pos + chunk_size) % self._capacity
 
             else:
                 first = chunk_size - avail
-                self._buffer[write_pos:] = data[offset : offset + avail]  # pyright: ignore[reportCallIssue, reportArgumentType]
-                self._buffer[:first] = data[offset + avail : offset + chunk_size]  # pyright: ignore[reportCallIssue, reportArgumentType]
+                self._buffer[write_pos:] = data[offset : offset + avail]
+                self._buffer[:first] = data[offset + avail : offset + chunk_size]
                 self._write_pos = first
 
             offset += chunk_size
