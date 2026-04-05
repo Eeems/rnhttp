@@ -74,7 +74,7 @@ requirements-dev: $(VENV_BIN_ACTIVATE) pyproject.toml ## Install dev requirement
 .PHONY: test
 test: requirements-dev ## Run tests
 	@. ${VENV_BIN_ACTIVATE}; \
-	python -m pytest \
+	python -um pytest \
 	  -vv \
 	  tests/
 
@@ -85,7 +85,7 @@ test: requirements-dev ## Run tests
 list-tests: ## List all available tests
 	@$(MAKE) requirements-dev >/dev/null
 	@. ${VENV_BIN_ACTIVATE}; \
-	python -m pytest \
+	python -um pytest \
 	  --collect-only \
 	  --quiet \
 	  --disable-warnings \
@@ -98,7 +98,7 @@ define test-target
 .PHONY: $2
 $2: requirements-dev
 	@. ${VENV_BIN_ACTIVATE}; \
-	python -m pytest \
+	python -um pytest \
 	  -vv \
 	  $1
 endef

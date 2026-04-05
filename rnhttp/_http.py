@@ -291,7 +291,7 @@ class CallbacksIO(io.RawIOBase):
         _ = self.buffer.write(data)
 
     def _on_message_complete(self) -> None:
-        _ = self.buffer.write(b"")
+        self.buffer.close()
 
     @property
     def headers(self) -> dict[str, list[str]]:
