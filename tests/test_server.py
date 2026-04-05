@@ -81,7 +81,7 @@ class TestHttpServerRoutes:
                 response.status = 200
 
             assert ("GET", "/test") in server._handlers  # pyright: ignore[reportPrivateUsage]
-            assert server._handlers[("GET", "/test")] == handler  # pyright: ignore[reportPrivateUsage]
+            assert server._handlers[("GET", "/test")][0] == handler  # pyright: ignore[reportPrivateUsage]
 
     def test_route_multiple_paths(self):
         """Test registering multiple routes."""
@@ -94,8 +94,8 @@ class TestHttpServerRoutes:
             def handler2(_: RequestIO, response: Response) -> None:
                 response.status = 201
 
-            server._handlers[("GET", "/path1")] = handler1  # pyright: ignore[reportPrivateUsage]
-            server._handlers[("GET", "/path2")] = handler2  # pyright: ignore[reportPrivateUsage]
+            server._handlers[("GET", "/path1")] = (handler1, [])  # pyright: ignore[reportPrivateUsage]
+            server._handlers[("GET", "/path2")] = (handler2, [])  # pyright: ignore[reportPrivateUsage]
 
             assert len(server._handlers) == 2  # pyright: ignore[reportPrivateUsage]
 
@@ -109,12 +109,16 @@ class TestHttpServerMatchPattern:
             assert match_pattern("/test", "/test") is True
             assert match_pattern("/test", "/other") is False
 
-    def test_wildcard_match(self):
-        """Test wildcard pattern matching."""
+    def test_param_match(self):
+        """Test named parameter pattern matching."""
         with patch("rnhttp.server.RNS"):
-            assert match_pattern("/api/*", "/api/users") is True
-            assert match_pattern("/api/*", "/api/users/123") is True
-            assert match_pattern("/api/*", "/other") is False
+            # match_pattern only checks structure, not type validity
+            assert match_pattern("/users/{id:int}", "/users/123") is True
+            assert (
+                match_pattern("/users/{id:int}", "/users/abc") is True
+            )  # structure matches
+            assert match_pattern("/users/{id:int}", "/posts/123") is False
+            assert match_pattern("/users/{name:str}", "/users/john") is True
 
 
 class TestHttpServerGetHandler:
@@ -125,29 +129,33 @@ class TestHttpServerGetHandler:
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
             mock_handler = MagicMock()
-            server._handlers[("GET", "/test")] = mock_handler  # pyright: ignore[reportPrivateUsage]
+            server._handlers[("GET", "/test")] = (mock_handler, [])  # pyright: ignore[reportPrivateUsage]
 
             request_io = RequestIO()
             _ = request_io.write(b"GET /test HTTP/1.1\r\nHost: example.com\r\n\r\n")
             _ = request_io.headers
 
-            handler = server.get_handler(request_io)
+            result = server.get_handler(request_io)
+            assert result is not None
+            handler, param_specs, pattern = result
             assert handler == mock_handler
 
-    def test_get_handler_wildcard_match(self):
-        """Test getting handler with wildcard match."""
+    def test_get_handler_param_match(self):
+        """Test getting handler with parameter match."""
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
             mock_handler = MagicMock()
-            server._handlers[("GET", "/api/*")] = mock_handler  # pyright: ignore[reportPrivateUsage]
+            server._handlers[("GET", "/users/{id:int}")] = (mock_handler, [("id", int)])  # pyright: ignore[reportPrivateUsage]
 
             request_io = RequestIO()
             _ = request_io.write(
-                b"GET /api/users HTTP/1.1\r\nHost: example.com\r\n\r\n"
+                b"GET /users/123 HTTP/1.1\r\nHost: example.com\r\n\r\n"
             )
             _ = request_io.headers
 
-            handler = server.get_handler(request_io)
+            result = server.get_handler(request_io)
+            assert result is not None
+            handler, param_specs, pattern = result
             assert handler == mock_handler
 
     def test_get_handler_not_found(self):

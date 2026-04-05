@@ -16,7 +16,7 @@ from types import (
     AsyncGeneratorType,
     GeneratorType,
 )
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import RNS
 
@@ -26,6 +26,8 @@ HandlerType = Callable[
     [RequestIO, Response],
     Generator[None] | AsyncGenerator[None] | None,
 ]
+
+ParamSpec = list[tuple[str, type]]
 
 T = TypeVar("T")
 
@@ -61,13 +63,109 @@ def consume_async_generator(gen: AsyncGenerator[None]) -> None:
     await_in_sync(fn(gen))
 
 
-def match_pattern(pattern: str, path: str) -> bool:
-    """Simple pattern matching for routes."""
-    # TODO make this not so shit
-    if pattern.endswith("*"):
-        return path.startswith(pattern[:-1])
+def parse_param_spec(param: str) -> tuple[str, type]:
+    """Parse a parameter specification like '{id:int}' into (name, type).
 
-    return path == pattern
+    Args:
+        param: A string like '{id:int}' or '{user_id}'
+
+    Returns:
+        A tuple of (name, type) where type defaults to str if not specified
+    """
+    param = param.strip()
+    if not (param.startswith("{") and param.endswith("}")):
+        msg = f"Invalid parameter specification: {param}"
+        raise ValueError(msg)
+
+    inner = param[1:-1]
+    if ":" in inner:
+        name, type_name = inner.split(":", 1)
+        type_name = type_name.strip()
+        if type_name not in ("int", "str", "float", "bool"):
+            msg = f"Unknown type: {type_name}"
+            raise ValueError(msg)
+        type_constructor = locals()[type_name]
+    else:
+        name = inner.strip()
+        type_constructor = str
+
+    return (name, type_constructor)
+
+
+def _parse_path_params(pattern: str) -> ParamSpec:
+    """Parse a route pattern to extract parameter specifications.
+
+    Args:
+        pattern: A route pattern like '/users/{id:int}/posts/{post_id}'
+
+    Returns:
+        A list of (name, type) tuples for each parameter
+    """
+    param_specs: ParamSpec = []
+    parts = pattern.split("/")
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("{") and part.endswith("}"):
+            param_specs.append(parse_param_spec(part))
+    return param_specs
+
+
+def match_pattern(pattern: str, path: str) -> bool:
+    """Check if a path matches a route pattern.
+
+    Args:
+        pattern: A route pattern like '/users/{id:int}'
+        path: An actual path like '/users/123'
+
+    Returns:
+        True if the path matches the pattern, False otherwise
+    """
+    pattern_parts = [p for p in pattern.split("/") if p]
+    path_parts = [p for p in path.split("/") if p]
+
+    if len(pattern_parts) != len(path_parts):
+        return False
+
+    for pp, p in zip(pattern_parts, path_parts):
+        if pp == p:
+            continue
+        if pp.startswith("{") and pp.endswith("}"):
+            continue
+        return False
+
+    return True
+
+
+def extract_params(pattern: str, path: str, param_specs: ParamSpec) -> dict[str, Any]:
+    """Extract parameter values from a path using the param specs.
+
+    Args:
+        pattern: The route pattern like '/users/{id:int}'
+        path: The actual path like '/users/123'
+        param_specs: The parameter specifications from _parse_path_params
+
+    Returns:
+        A dictionary of parameter names to typed values
+
+    Raises:
+        ValueError: If a type conversion fails
+    """
+    pattern_parts = [p for p in pattern.split("/") if p]
+    path_parts = [p for p in path.split("/") if p]
+
+    params: dict[str, Any] = {}
+
+    for pp, p in zip(pattern_parts, path_parts):
+        if pp.startswith("{") and pp.endswith("}"):
+            name, type_constructor = parse_param_spec(pp)
+            try:
+                params[name] = type_constructor(p)
+            except ValueError as e:
+                msg = f"Invalid value for parameter {name}: {p}"
+                raise ValueError(msg) from e
+
+    return params
 
 
 class HttpServer:
@@ -85,7 +183,8 @@ class HttpServer:
         self._request_timeout: float = request_timeout
         self._read_timeout: float = read_timeout
         self._destination: RNS.Destination | None = None
-        self._handlers: dict[tuple[str, str], HandlerType] = {}
+        self._handlers: dict[tuple[str, str], tuple[HandlerType, ParamSpec]] = {}
+        self._default_handler: HandlerType | None = None
         self._running: bool = False
 
     @staticmethod
@@ -125,18 +224,20 @@ class HttpServer:
         """
 
         def decorator(handler: HandlerType) -> HandlerType:
-            self._handlers[(method.upper(), path)] = handler
+            param_specs = _parse_path_params(path)
+            self._handlers[(method.upper(), path)] = (handler, param_specs)
             return handler
 
         return decorator
 
     def add_handler(self, path: str, handler: HandlerType, method: str = "GET") -> None:
         """Add a handler for a path and method."""
-        self._handlers[(method.upper(), path)] = handler
+        param_specs = _parse_path_params(path)
+        self._handlers[(method.upper(), path)] = (handler, param_specs)
 
     def set_default_handler(self, handler: HandlerType) -> None:
         """Set a default handler for all requests."""
-        self._handlers[("*", "*")] = handler
+        self._default_handler = handler
 
     async def start(self) -> None:
         """Start the HTTP server."""
@@ -202,20 +303,36 @@ class HttpServer:
         """Handle link close."""
         print(f"Closed: {link}")
 
-    def get_handler(self, request_io: RequestIO) -> HandlerType | None:
-        """Find handler for request. Returns None if no handler found."""
+    def get_handler(
+        self, request_io: RequestIO
+    ) -> tuple[HandlerType, ParamSpec, str] | None:
+        """Find handler for request. Returns None if no handler found.
+
+        Returns:
+            A tuple of (handler, param_specs, pattern) if found, None otherwise
+        """
         method = request_io.method
         path = request_io.url.path
         if path is None:
             return None
 
+        # Exact match first
         key = (method, path)
         if key in self._handlers:
-            return self._handlers[key]
+            handler, param_specs = self._handlers[key]
+            return (handler, param_specs, path)
 
-        for (_, p), handler in self._handlers.items():
-            if match_pattern(p, path):
-                return handler
+        # Pattern match
+        for (m, pattern), value in self._handlers.items():
+            if method != m:
+                continue
+            if match_pattern(pattern, path):
+                handler, param_specs = value
+                return (handler, param_specs, pattern)
+
+        # Default handler if no match
+        if self._default_handler is not None:
+            return (self._default_handler, [], path)
 
         return None
 
@@ -230,18 +347,23 @@ class HttpServer:
         path = request_io.url.path
         print(f"{link} {method} {path}")
 
-        handler = self.get_handler(request_io)
+        result = self.get_handler(request_io)
 
-        if handler is None:
+        if result is None:
             while request_io.read(4096):
                 pass
 
             Response(404, body=b"Not Found").sendto(writer)
             return
 
+        handler, param_specs, route_pattern = result
+
         response = Response(status=200)
         try:
-            gen = handler(request_io, response)
+            # Extract params from path (may raise ValueError -> 400)
+            params = extract_params(route_pattern, path, param_specs)
+
+            gen = handler(request_io, response, **params)
             if isinstance(gen, GeneratorType | AsyncGeneratorType):
                 sendto_thread = threading.Thread(target=response.sendto, args=(writer,))
                 resume_thread = threading.Thread(
@@ -260,6 +382,8 @@ class HttpServer:
             else:
                 response.sendto(writer)
 
+        except ValueError:
+            Response(400, body=b"Bad Request").sendto(writer)
         except Exception as e:
             Response(500, body=str(e).encode()).sendto(writer)
 
