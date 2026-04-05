@@ -18,11 +18,15 @@ from httptools import (
     parse_url,  # pyright: ignore[reportUnknownVariableType]
 )
 
-from ._compat import override
+from ._compat import (
+    Reader,
+    Writer,
+    override,
+)
 from ._pipe import PipeIO
 
 if TYPE_CHECKING:
-    from _typeshed import (
+    from ._compat import (
         ReadableBuffer,
         WriteableBuffer,
     )
@@ -47,8 +51,7 @@ class URL:
         self.fragment: str | None = fragment
         self.userinfo: str | None = userinfo
 
-    @override
-    def __str__(self) -> str:
+    def __str__(self) -> str:  # pyright: ignore[reportImplicitOverride]
         url = ""
         if self.schema is not None:
             url += self.schema + "://"
@@ -305,7 +308,7 @@ class CallbacksIO(io.RawIOBase):
         raise ValueError("Unable to determine size")
 
     @override
-    def write(self, data: ReadableBuffer, /) -> int:
+    def write(self, data: "ReadableBuffer", /) -> int:
         self.parser.feed_data(memoryview(data))  # pyright: ignore[reportUnknownMemberType]
         return len(data) if hasattr(data, "__len__") else -1  # pyright: ignore[reportArgumentType]
 
@@ -338,7 +341,7 @@ class CallbacksIO(io.RawIOBase):
         return lines
 
     @override
-    def readinto(self, buffer: WriteableBuffer, /) -> int:
+    def readinto(self, buffer: "WriteableBuffer", /) -> int:
         _ = self.callbacks.wait_ready()
         self.callbacks.body_event.set()
         res = self.buffer.readinto(buffer)
@@ -390,11 +393,11 @@ class ResponseIO(CallbacksIO):
 class HttpSendTo:
     def __init__(
         self,
-        body: io.Reader[bytes] | bytes | None = None,
+        body: Reader[bytes] | bytes | None = None,
         headers: dict[str, str] | None = None,
     ) -> None:
         self.headers: dict[str, list[str]] = {}
-        self._body: io.Reader[bytes] | bytes | None
+        self._body: Reader[bytes] | bytes | None
         self.encoding: str = "us-ascii"
         if headers is not None:
             for key, value in headers.items():
@@ -403,11 +406,11 @@ class HttpSendTo:
         self.body = body
 
     @property
-    def body(self) -> io.Reader[bytes] | bytes | None:
+    def body(self) -> Reader[bytes] | bytes | None:
         return self._body
 
     @body.setter
-    def body(self, body: io.Reader[bytes] | bytes | None) -> None:
+    def body(self, body: Reader[bytes] | bytes | None) -> None:
         if isinstance(body, bytes):
             self.headers["content-length"] = [str(len(body))]
 
@@ -444,7 +447,7 @@ class HttpSendTo:
             case _:
                 raise ValueError(f"Header {name} has more than one value")
 
-    def sendto(self, stream: io.Writer[bytes]) -> None:
+    def sendto(self, stream: Writer[bytes]) -> None:
         body = self.body
         if isinstance(body, bytes):
             body = io.BytesIO(body)
@@ -501,7 +504,7 @@ class Request(HttpSendTo):
         method: str,
         url: URL,
         headers: dict[str, str] | None = None,
-        body: io.Reader[bytes] | bytes | None = None,
+        body: Reader[bytes] | bytes | None = None,
     ) -> None:
         super().__init__(body=body, headers=headers)
         self.method: str = method.upper()
@@ -551,7 +554,7 @@ class Response(HttpSendTo):
         status: int,
         reason: str | None = None,
         headers: dict[str, str] | None = None,
-        body: io.Reader[bytes] | bytes | None = None,
+        body: Reader[bytes] | bytes | None = None,
     ) -> None:
         super().__init__(body=body, headers=headers)
         self.status: int = status

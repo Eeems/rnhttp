@@ -7,7 +7,10 @@ import os
 import RNS
 
 from rnhttp import HttpServer
-from rnhttp._http import RequestIO, Response
+from rnhttp._http import (
+    RequestIO,
+    Response,
+)
 
 
 async def main() -> None:

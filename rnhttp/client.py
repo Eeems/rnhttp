@@ -2,7 +2,6 @@
 
 import argparse
 import asyncio
-import io
 import os
 import sys
 import threading
@@ -13,6 +12,7 @@ from typing import (
 
 import RNS
 
+from ._compat import Reader
 from ._http import (
     URL,
     Request,
@@ -113,7 +113,7 @@ class HttpClient:
         path: str,
         method: str = "GET",
         headers: dict[str, str] | None = None,
-        body: io.Reader[bytes] | bytes | None = None,
+        body: Reader[bytes] | bytes | None = None,
     ) -> ResponseIO:
         """Send an HTTP request.
 
@@ -121,7 +121,7 @@ class HttpClient:
             path: Request path
             method: HTTP method (GET, POST, etc.)
             headers: Additional headers
-            body: Request body (can be io.Reader[bytes] for streaming)
+            body: Request body (can be Reader[bytes] for streaming)
 
         Returns:
             Response object
@@ -181,7 +181,7 @@ class HttpClient:
     async def post(
         self,
         path: str,
-        body: io.Reader[bytes] | bytes | None = None,
+        body: Reader[bytes] | bytes | None = None,
         headers: dict[str, str] | None = None,
     ) -> ResponseIO:
         """Send POST request."""
@@ -190,7 +190,7 @@ class HttpClient:
     async def put(
         self,
         path: str,
-        body: io.Reader[bytes] | bytes | None = None,
+        body: Reader[bytes] | bytes | None = None,
         headers: dict[str, str] | None = None,
     ) -> ResponseIO:
         """Send PUT request."""
@@ -270,7 +270,7 @@ async def main():
                 headers[name] = value
 
     assert isinstance(args.body, str | None)  # pyright: ignore[reportAny]
-    body: io.Reader[bytes] | bytes | None = (
+    body: Reader[bytes] | bytes | None = (
         args.body.encode("utf-8") if args.body else None
     )
 

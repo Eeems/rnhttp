@@ -23,7 +23,10 @@ from typing import (
 
 import RNS
 
-from ._http import RequestIO, Response
+from ._http import (
+    RequestIO,
+    Response,
+)
 
 HandlerType = Callable[
     [RequestIO, Response],

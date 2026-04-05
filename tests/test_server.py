@@ -7,8 +7,14 @@ from unittest.mock import (
     patch,
 )
 
-from rnhttp._http import RequestIO, Response
-from rnhttp.server import HttpServer, match_pattern
+from rnhttp._http import (
+    RequestIO,
+    Response,
+)
+from rnhttp.server import (
+    HttpServer,
+    match_pattern,
+)
 
 
 class TestHttpServer:

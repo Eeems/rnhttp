@@ -8,7 +8,7 @@ from typing import (
 from ._compat import override
 
 if TYPE_CHECKING:
-    from _typeshed import ReadableBuffer
+    from ._compat import ReadableBuffer
 
 
 class PipeIO(io.RawIOBase):
@@ -26,7 +26,7 @@ class PipeIO(io.RawIOBase):
         self._eof: bool = False
 
     @override
-    def write(self, data: ReadableBuffer, /) -> int:
+    def write(self, data: "ReadableBuffer", /) -> int:
         data = cast(
             memoryview[bytes],
             data if isinstance(data, memoryview) else memoryview(data),

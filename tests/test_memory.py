@@ -10,7 +10,10 @@ import time
 
 import psutil
 
-from rnhttp._http import RequestIO, ResponseIO
+from rnhttp._http import (
+    RequestIO,
+    ResponseIO,
+)
 from rnhttp._pipe import PipeIO
 
 
