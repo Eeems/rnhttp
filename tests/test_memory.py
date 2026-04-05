@@ -77,28 +77,45 @@ class TestCallbacksIOMemory:
     """
 
     def test_request_body_memory_bounded(self) -> None:
-        """Request body streaming should use bounded memory."""
+        """Request body streaming should use bounded memory with large payloads."""
         capacity = 4096
         request_io = RequestIO()
         request_io.buffer = PipeIO(capacity=capacity)
         baseline = get_rss()
 
-        full_request = (
-            b"POST /test HTTP/1.1\r\nHost: example.com\r\nContent-Length: 1024\r\n\r\n"
-            + b"x" * 1024
+        body_size = 5 * 1024 * 1024  # 5MB
+        chunk_size = 4096
+        headers = (
+            b"POST /test HTTP/1.1\r\n"
+            b"Host: example.com\r\n"
+            + f"Content-Length: {body_size}\r\n".encode()
+            + b"\r\n"
         )
 
         write_done = threading.Event()
         read_done = threading.Event()
 
         def writer() -> None:
-            _ = request_io.write(full_request)
+            # Write headers first
+            _ = request_io.write(headers)
+            # Write body in small chunks to exercise backpressure
+            sent = 0
+            while sent < body_size:
+                chunk = b"x" * min(chunk_size, body_size - sent)
+                _ = request_io.write(chunk)
+                sent += len(chunk)
+                time.sleep(0.001)
             request_io.close()
             write_done.set()
 
         def reader() -> None:
-            data = request_io.read(-1)
-            assert len(data) == 1024
+            total = 0
+            while True:
+                data = request_io.read(chunk_size)
+                if not data:
+                    break
+                total += len(data)
+            assert total == body_size
             read_done.set()
 
         write_thread = threading.Thread(target=writer)
@@ -118,32 +135,51 @@ class TestCallbacksIOMemory:
             assert read_done.is_set()
 
             growth = get_rss() - baseline
-            assert growth < 204800
+            assert growth < 1048576  # < 1MB — proves 5MB body didn't buffer fully
         finally:
             request_io.close()
             write_thread.join(timeout=2)
             read_thread.join(timeout=2)
 
     def test_response_body_memory_bounded(self) -> None:
-        """Response body streaming should use bounded memory."""
+        """Response body streaming should use bounded memory with large payloads."""
         capacity = 4096
         response_io = ResponseIO()
         response_io.buffer = PipeIO(capacity=capacity)
         baseline = get_rss()
 
-        full_response = b"HTTP/1.1 200 OK\r\nContent-Length: 1024\r\n\r\n" + b"x" * 1024
+        body_size = 5 * 1024 * 1024  # 5MB
+        chunk_size = 4096
+        headers = (
+            b"HTTP/1.1 200 OK\r\n"
+            + f"Content-Length: {body_size}\r\n".encode()
+            + b"\r\n"
+        )
 
         write_done = threading.Event()
         read_done = threading.Event()
 
         def writer() -> None:
-            _ = response_io.write(full_response)
+            # Write headers first
+            _ = response_io.write(headers)
+            # Write body in small chunks to exercise backpressure
+            sent = 0
+            while sent < body_size:
+                chunk = b"x" * min(chunk_size, body_size - sent)
+                _ = response_io.write(chunk)
+                sent += len(chunk)
+                time.sleep(0.001)
             response_io.close()
             write_done.set()
 
         def reader() -> None:
-            data = response_io.read(-1)
-            assert len(data) == 1024
+            total = 0
+            while True:
+                data = response_io.read(chunk_size)
+                if not data:
+                    break
+                total += len(data)
+            assert total == body_size
             read_done.set()
 
         write_thread = threading.Thread(target=writer)
@@ -163,7 +199,7 @@ class TestCallbacksIOMemory:
             assert read_done.is_set()
 
             growth = get_rss() - baseline
-            assert growth < 204800
+            assert growth < 1048576  # < 1MB — proves 5MB body didn't buffer fully
         finally:
             response_io.close()
             write_thread.join(timeout=2)
