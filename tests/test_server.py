@@ -92,8 +92,12 @@ class TestHttpServerRoutes:
             def handler1(_request: RequestIO, _response: Response) -> None:  # pyright: ignore[reportUnusedFunction]
                 pass
 
-            @server.route("/path1")
+            @server.route("/path1")  # this handler overwrites the prevous one
             def handler2(_request: RequestIO, _response: Response) -> None:  # pyright: ignore[reportUnusedFunction]
+                pass
+
+            @server.route("/path2")
+            def handler3(_request: RequestIO, _response: Response) -> None:  # pyright: ignore[reportUnusedFunction]
                 pass
 
             assert len(server._handlers) == 2  # pyright: ignore[reportPrivateUsage]

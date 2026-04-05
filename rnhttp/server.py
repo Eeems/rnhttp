@@ -273,7 +273,6 @@ class HttpServer:
 
         def callback(ready: int) -> None:
             nonlocal request_io, link_buffer
-            print(f"callback({ready})")
             self.on_reader_ready(link_buffer, request_io, ready)
 
         print(f"Connected: {link}")
@@ -360,6 +359,7 @@ class HttpServer:
                 pass
 
             Response(404, body=b"Not Found").sendto(writer)
+            print(f"{link} {method} {path} 404")
             return
 
         handler, param_specs, route_pattern = result
@@ -367,7 +367,11 @@ class HttpServer:
         try:
             params = extract_params(route_pattern, path or "", param_specs)
         except ValueError:
+            while request_io.read(4096):
+                pass
+
             Response(400, body=b"Bad Request").sendto(writer)
+            print(f"{link} {method} {path} 400")
             return
 
         try:
@@ -391,8 +395,14 @@ class HttpServer:
             else:
                 response.sendto(writer)
 
+            print(f"{link} {method} {path} {response.status}")
+
         except Exception as e:
+            while request_io.read(4096):
+                pass
+
             Response(500, body=str(e).encode()).sendto(writer)
+            print(f"{link} {method} {path} 500")
             raise
 
     @property
