@@ -16,7 +16,10 @@ from types import (
     AsyncGeneratorType,
     GeneratorType,
 )
-from typing import Any, TypeVar
+from typing import (
+    Any,
+    TypeVar,
+)
 
 import RNS
 
@@ -28,7 +31,6 @@ HandlerType = Callable[
 ]
 
 ParamSpec = list[tuple[str, type]]
-
 T = TypeVar("T")
 
 
@@ -78,13 +80,17 @@ def parse_param_spec(param: str) -> tuple[str, type]:
         raise ValueError(msg)
 
     inner = param[1:-1]
+    type_constructor: type
     if ":" in inner:
         name, type_name = inner.split(":", 1)
         type_name = type_name.strip()
         if type_name not in ("int", "str", "float", "bool"):
             msg = f"Unknown type: {type_name}"
             raise ValueError(msg)
-        type_constructor = locals()[type_name]
+
+        method = locals()[type_name]  # pyright: ignore[reportAny]
+        assert isinstance(method, type)
+        type_constructor = method
     else:
         name = inner.strip()
         type_constructor = str
@@ -137,7 +143,7 @@ def match_pattern(pattern: str, path: str) -> bool:
     return True
 
 
-def extract_params(pattern: str, path: str, param_specs: ParamSpec) -> dict[str, Any]:
+def extract_params(pattern: str, path: str, param_specs: ParamSpec) -> dict[str, Any]:  # pyright: ignore[reportExplicitAny, reportUnusedParameter]
     """Extract parameter values from a path using the param specs.
 
     Args:
@@ -153,14 +159,14 @@ def extract_params(pattern: str, path: str, param_specs: ParamSpec) -> dict[str,
     """
     pattern_parts = [p for p in pattern.split("/") if p]
     path_parts = [p for p in path.split("/") if p]
-
-    params: dict[str, Any] = {}
+    params: dict[str, Any] = {}  # pyright: ignore[reportExplicitAny]
 
     for pp, p in zip(pattern_parts, path_parts):
         if pp.startswith("{") and pp.endswith("}"):
             name, type_constructor = parse_param_spec(pp)
             try:
                 params[name] = type_constructor(p)
+
             except ValueError as e:
                 msg = f"Invalid value for parameter {name}: {p}"
                 raise ValueError(msg) from e
@@ -357,12 +363,15 @@ class HttpServer:
             return
 
         handler, param_specs, route_pattern = result
-
         response = Response(status=200)
         try:
-            # Extract params from path (may raise ValueError -> 400)
-            params = extract_params(route_pattern, path, param_specs)
+            params = extract_params(route_pattern, path or "", param_specs)
+        except ValueError:
+            Response(400, body=b"Bad Request").sendto(writer)
+            return
 
+        try:
+            # Extract params from path (may raise ValueError -> 400)
             gen = handler(request_io, response, **params)
             if isinstance(gen, GeneratorType | AsyncGeneratorType):
                 sendto_thread = threading.Thread(target=response.sendto, args=(writer,))
@@ -382,10 +391,9 @@ class HttpServer:
             else:
                 response.sendto(writer)
 
-        except ValueError:
-            Response(400, body=b"Bad Request").sendto(writer)
         except Exception as e:
             Response(500, body=str(e).encode()).sendto(writer)
+            raise
 
     @property
     def port(self) -> int:

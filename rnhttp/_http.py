@@ -9,6 +9,7 @@ from types import TracebackType
 from typing import (
     TYPE_CHECKING,
     Self,
+    cast,
     final,
 )
 
@@ -31,19 +32,22 @@ class PipeIO(io.RawIOBase):
     """Fixed-size ring buffer. writes block when full. good for backpressure."""
 
     def __init__(self, capacity: int = 65536) -> None:
-        self._buffer = bytearray(capacity)
-        self._capacity = capacity
-        self._read_pos = 0
-        self._write_pos = 0
-        self._available = 0
-        self._data_available = threading.Event()
-        self._write_ready = threading.Event()
+        self._buffer: bytearray = bytearray(capacity)
+        self._capacity: int = capacity
+        self._read_pos: int = 0
+        self._write_pos: int = 0
+        self._available: int = 0
+        self._data_available: threading.Event = threading.Event()
+        self._write_ready: threading.Event = threading.Event()
         self._write_ready.set()
-        self._eof = False
+        self._eof: bool = False
 
     @override
     def write(self, data: ReadableBuffer, /) -> int:
-        data = data if isinstance(data, memoryview) else memoryview(data)
+        data = cast(
+            memoryview[bytes],
+            data if isinstance(data, memoryview) else memoryview(data),
+        )
         length = len(data)
         offset = 0
 
@@ -59,14 +63,14 @@ class PipeIO(io.RawIOBase):
             avail = self._capacity - write_pos
 
             if chunk_size <= avail:
-                self._buffer[write_pos : write_pos + chunk_size] = data[
+                self._buffer[write_pos : write_pos + chunk_size] = data[  # pyright: ignore[reportCallIssue, reportArgumentType]
                     offset : offset + chunk_size
                 ]
                 self._write_pos = (write_pos + chunk_size) % self._capacity
             else:
                 first = chunk_size - avail
-                self._buffer[write_pos:] = data[offset : offset + avail]
-                self._buffer[:first] = data[offset + avail : offset + chunk_size]
+                self._buffer[write_pos:] = data[offset : offset + avail]  # pyright: ignore[reportCallIssue, reportArgumentType]
+                self._buffer[:first] = data[offset + avail : offset + chunk_size]  # pyright: ignore[reportCallIssue, reportArgumentType]
                 self._write_pos = first
 
             offset += chunk_size
@@ -391,10 +395,7 @@ class CallbacksIO(io.RawIOBase):
         return super().__exit__(exc_type, exc_val, exc_tb)
 
     def _on_body(self, data: bytes) -> None:
-        pos = self.buffer.tell()
-        _ = self.buffer.seek(0, io.SEEK_END)
         _ = self.buffer.write(data)
-        _ = self.buffer.seek(pos, io.SEEK_SET)
 
     def _on_message_complete(self) -> None:
         _ = self.buffer.write(b"")
@@ -430,13 +431,6 @@ class CallbacksIO(io.RawIOBase):
     def readall(self, /) -> bytes:
         _ = self.callbacks.wait()
         return self.read(-1)
-
-    def read1(self, size: int = -1, /) -> bytes:
-        _ = self.callbacks.wait_ready()
-        self.callbacks.body_event.set()
-        data = self.buffer.read1(size)
-        self.callbacks.body_event.clear()
-        return data
 
     @override
     def readline(self, size: int | None = -1, /) -> bytes:

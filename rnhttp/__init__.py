@@ -6,14 +6,8 @@ __version__ = version("rnhttp")
 
 from .client import HttpClient
 from .server import HttpServer
-from .types import (
-    HttpRequest,
-    HttpResponse,
-)
 
 __all__ = [
-    "HttpRequest",
-    "HttpResponse",
     "HttpServer",
     "HttpClient",
 ]

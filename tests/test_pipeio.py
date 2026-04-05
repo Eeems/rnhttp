@@ -1,3 +1,4 @@
+# pyright: reportPrivateUsage=false
 """Tests for PipeIO ring buffer."""
 
 import threading
@@ -22,7 +23,7 @@ class TestPipeIOBasic:
     def test_write_returns_length(self):
         """Write returns number of bytes written."""
         pipe = PipeIO(capacity=100)
-        result = pipe.write(b"hello")
+        result = _ = pipe.write(b"hello")
         assert result == 5
 
     def test_read_zero_returns_empty(self):
@@ -38,14 +39,14 @@ class TestPipeIOBuffer:
     def test_write_read_roundtrip(self):
         """Basic write then read."""
         pipe = PipeIO(capacity=100)
-        pipe.write(b"hello")
+        _ = pipe.write(b"hello")
         result = pipe.read(5)
         assert result == b"hello"
 
     def test_partial_read(self):
         """Partial read returns partial data."""
         pipe = PipeIO(capacity=100)
-        pipe.write(b"hello world")
+        _ = pipe.write(b"hello world")
 
         result = pipe.read(5)
         assert result == b"hello"
@@ -56,7 +57,7 @@ class TestPipeIOBuffer:
     def test_read_larger_than_available(self):
         """Reading with size larger than available blocks until EOF."""
         pipe = PipeIO(capacity=100)
-        pipe.write(b"hello")
+        _ = pipe.write(b"hello")
         pipe.close()
 
         # Read 1000 bytes - should return all available since EOF
@@ -76,15 +77,11 @@ class TestPipeIOWriteBlocks:
         pipe = PipeIO(capacity=10)
 
         # Fill the buffer
-        pipe.write(b"1234567890")
+        _ = pipe.write(b"1234567890")
 
         # This should block - start in thread
-        result = []
-
-        def write_more():
-            start = time.time()
-            pipe.write(b"extra")
-            result.append(time.time() - start)
+        def write_more() -> None:
+            _ = pipe.write(b"extra")
 
         thread = threading.Thread(target=write_more)
         thread.start()
@@ -93,7 +90,7 @@ class TestPipeIOWriteBlocks:
         time.sleep(0.1)
 
         # Read some data to free space
-        pipe.read(5)
+        _ = pipe.read(5)
 
         # Wait for write to complete
         thread.join(timeout=2)
@@ -108,12 +105,11 @@ class TestPipeIOReadBlocks:
         """Read should block when no data available and not EOF."""
         pipe = PipeIO(capacity=100)
 
-        result = []
+        data: bytes | None = None
 
-        def read_data():
-            start = time.time()
+        def read_data() -> None:
+            nonlocal data
             data = pipe.read(5)  # Request 5 bytes
-            result.append((time.time() - start, data))
 
         thread = threading.Thread(target=read_data)
         thread.start()
@@ -123,13 +119,13 @@ class TestPipeIOReadBlocks:
         assert thread.is_alive()
 
         # Write data
-        pipe.write(b"hello")
+        _ = pipe.write(b"hello")
 
         # Wait for read to complete
         thread.join(timeout=2)
 
         assert thread.is_alive() is False
-        assert result[0][1] == b"hello"
+        assert data == b"hello"
 
 
 class TestPipeIOEOF:
@@ -138,18 +134,18 @@ class TestPipeIOEOF:
     def test_close_signals_eof(self):
         """Close sets EOF and read returns remaining data."""
         pipe = PipeIO(capacity=100)
-        pipe.write(b"hello")
+        _ = pipe.write(b"hello")
 
         # Close sets EOF
         pipe.close()
 
         # Read should return remaining data
-        result = pipe.read(10)
-        assert result == b"hello"
+        data = pipe.read(10)
+        assert data == b"hello"
 
         # Further reads return empty
-        result = pipe.read(1)
-        assert result == b""
+        data = pipe.read(1)
+        assert data == b""
 
 
 class TestPipeIOWrapping:
@@ -160,17 +156,17 @@ class TestPipeIOWrapping:
         pipe = PipeIO(capacity=10)
 
         # Fill buffer
-        pipe.write(b"1234567890")
+        _ = pipe.write(b"1234567890")
 
         # Read some (reads 3 bytes: "123", leaves 7 in buffer)
-        pipe.read(3)
+        _ = pipe.read(3)
 
         # Write more - should wrap
-        pipe.write(b"abc")
+        _ = pipe.write(b"abc")
 
         # Read all - should get remaining 7 from before + 3 new = 10 bytes
-        result = pipe.read(10)
-        assert result == b"4567890abc"
+        data = pipe.read(10)
+        assert data == b"4567890abc"
 
 
 class TestPipeIOFlush:
@@ -180,7 +176,7 @@ class TestPipeIOFlush:
         """Flush signals data_available if data waiting."""
         pipe = PipeIO(capacity=100)
 
-        pipe.write(b"hello")
+        _ = pipe.write(b"hello")
 
         # Clear the event
         pipe._data_available.clear()
