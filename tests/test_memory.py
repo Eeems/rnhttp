@@ -20,7 +20,7 @@ from rnhttp._pipe import PipeIO
 
 def get_rss() -> int:
     """Get current process RSS memory in bytes."""
-    gc.collect()
+    _ = gc.collect()
     return psutil.Process(os.getpid()).memory_info().rss  # pyright: ignore[reportAny]
 
 
