@@ -4,6 +4,7 @@ Verify that PipeIO ring buffer and CallbacksIO interfaces use bounded memory
 when streaming large payloads, and that backpressure works correctly.
 """
 
+import gc
 import os
 import threading
 import time
@@ -19,6 +20,7 @@ from rnhttp._pipe import PipeIO
 
 def get_rss() -> int:
     """Get current process RSS memory in bytes."""
+    gc.collect()
     return psutil.Process(os.getpid()).memory_info().rss  # pyright: ignore[reportAny]
 
 
