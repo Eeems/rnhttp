@@ -233,6 +233,24 @@ class Callbacks:
 
         return self.url_event.wait(timeout)
 
+    def drain(self) -> None:
+        self._on_message_begin = None
+        self._on_url = None
+        self._on_header = None
+        self._on_headers_complete = None
+        self._on_body = None
+        self._on_message_complete = None
+        self._on_chunk_header = None
+        self._on_chunk_complete = None
+        self._on_status = None
+        self.ready_event.set()
+        self.message_event.set()
+        self.body_event.set()
+        self.header_event.set()
+        self.chunk_event.set()
+        self.status_event.set()
+        self.url_event.set()
+
 
 class CallbacksIO(io.RawIOBase):
     def __init__(
@@ -258,12 +276,15 @@ class CallbacksIO(io.RawIOBase):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        self.callbacks.drain()
         self.buffer.close()
         return super().__exit__(exc_type, exc_val, exc_tb)
 
     def _on_body(self, data: bytes) -> None:
+        pos = self.buffer.tell()
+        _ = self.buffer.seek(0, io.SEEK_END)
         _ = self.buffer.write(data)
-        _ = self.buffer.seek(-len(data), io.SEEK_CUR)
+        _ = self.buffer.seek(pos, io.SEEK_SET)
 
     def _on_message_complete(self) -> None:
         _ = self.buffer.write(b"")
@@ -304,7 +325,7 @@ class CallbacksIO(io.RawIOBase):
         _ = self.callbacks.wait_ready()
         self.callbacks.body_event.set()
         data = self.buffer.read1(size)
-        self.callbacks.body_event.set()
+        self.callbacks.body_event.clear()
         return data
 
     @override
@@ -312,7 +333,7 @@ class CallbacksIO(io.RawIOBase):
         _ = self.callbacks.wait_ready()
         self.callbacks.body_event.set()
         data = self.buffer.readline(size)
-        self.callbacks.body_event.set()
+        self.callbacks.body_event.clear()
         return data
 
     @override
@@ -320,7 +341,7 @@ class CallbacksIO(io.RawIOBase):
         _ = self.callbacks.wait_ready()
         self.callbacks.body_event.set()
         lines = self.buffer.readlines(hint)
-        self.callbacks.body_event.set()
+        self.callbacks.body_event.clear()
         return lines
 
     @override
@@ -328,8 +349,12 @@ class CallbacksIO(io.RawIOBase):
         _ = self.callbacks.wait_ready()
         self.callbacks.body_event.set()
         res = self.buffer.readinto(buffer)
-        self.callbacks.body_event.set()
+        self.callbacks.body_event.clear()
         return res
+
+    @override
+    def flush(self, /) -> None:
+        self.buffer.flush()
 
 
 @final
@@ -370,11 +395,19 @@ class ResponseIO(CallbacksIO):
 
 
 class HttpSendTo:
-    def __init__(self, body: io.Reader[bytes] | bytes | None) -> None:
+    def __init__(
+        self,
+        body: io.Reader[bytes] | bytes | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.headers: dict[str, list[str]] = {}
         self._body: io.Reader[bytes] | bytes | None
-        self.body = body
         self.encoding: str = "us-ascii"
+        if headers is not None:
+            for key, value in headers.items():
+                self.set_header(key, value)
+
+        self.body = body
 
     @property
     def body(self) -> io.Reader[bytes] | bytes | None:
@@ -474,10 +507,11 @@ class Request(HttpSendTo):
         self,
         method: str,
         url: URL,
+        headers: dict[str, str] | None = None,
         body: io.Reader[bytes] | bytes | None = None,
     ) -> None:
-        super().__init__(body)
-        self.method: str = method
+        super().__init__(body=body, headers=headers)
+        self.method: str = method.upper()
         self.url: URL = url
         if url.host is not None:
             self.headers["host"] = [url.host]
@@ -523,9 +557,10 @@ class Response(HttpSendTo):
         self,
         status: int,
         reason: str | None = None,
+        headers: dict[str, str] | None = None,
         body: io.Reader[bytes] | bytes | None = None,
     ) -> None:
-        super().__init__(body)
+        super().__init__(body=body, headers=headers)
         self.status: int = status
         self.reason: str = reason or Response.reason_text(status)
 
@@ -643,7 +678,7 @@ if __name__ == "__main__":
         Request(
             "GET",
             URL(host="example.com", path="/", query="test=1", fragment="test"),
-            b"test",
+            body=b"test",
         ).sendto(request)
 
     print("Request()")
@@ -662,7 +697,7 @@ if __name__ == "__main__":
         Request(
             "GET",
             URL(host="example.com", path="/", query="test=1", fragment="test"),
-            io.BytesIO(b"test"),
+            body=io.BytesIO(b"test"),
         ).sendto(request)
 
     print("Request() # chunked")

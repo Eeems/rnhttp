@@ -2,17 +2,13 @@
 
 import asyncio
 import os
-from collections.abc import Awaitable
 from unittest.mock import (
     MagicMock,
     patch,
 )
 
-from rnhttp.server import HttpServer
-from rnhttp.types import (
-    HttpRequest,
-    HttpResponse,
-)
+from rnhttp._http import RequestIO, Response
+from rnhttp.server import HttpServer, match_pattern
 
 
 class TestHttpServer:
@@ -29,7 +25,6 @@ class TestHttpServer:
             assert server._read_timeout == 30.0  # pyright: ignore[reportPrivateUsage]  # noqa: PLR2004
             assert server._destination is None  # pyright: ignore[reportPrivateUsage]
             assert server._running is False  # pyright: ignore[reportPrivateUsage]
-            assert server._links == {}  # pyright: ignore[reportPrivateUsage]
 
     def test_custom_values(self):
         """Test custom initialization values."""
@@ -82,8 +77,8 @@ class TestHttpServerRoutes:
             server = HttpServer(port=8080)
 
             @server.route("/test")
-            def handler(_: HttpRequest) -> HttpResponse:
-                return HttpResponse(status=200, reason="OK")
+            def handler(_: RequestIO, response: Response) -> None:
+                response.status = 200
 
             assert ("GET", "/test") in server._handlers  # pyright: ignore[reportPrivateUsage]
             assert server._handlers[("GET", "/test")] == handler  # pyright: ignore[reportPrivateUsage]
@@ -93,11 +88,11 @@ class TestHttpServerRoutes:
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
 
-            def handler1(_: HttpRequest) -> HttpResponse:
-                return HttpResponse(status=200, reason="OK")
+            def handler1(_: RequestIO, response: Response) -> None:
+                response.status = 200
 
-            def handler2(_: HttpRequest) -> HttpResponse:
-                return HttpResponse(status=201, reason="Created")
+            def handler2(_: RequestIO, response: Response) -> None:
+                response.status = 201
 
             server._handlers[("GET", "/path1")] = handler1  # pyright: ignore[reportPrivateUsage]
             server._handlers[("GET", "/path2")] = handler2  # pyright: ignore[reportPrivateUsage]
@@ -111,65 +106,63 @@ class TestHttpServerMatchPattern:
     def test_exact_match(self):
         """Test exact path matching."""
         with patch("rnhttp.server.RNS"):
-            server = HttpServer(port=8080)
-
-            assert server._match_pattern("/test", "/test") is True  # pyright: ignore[reportPrivateUsage]
-            assert server._match_pattern("/test", "/other") is False  # pyright: ignore[reportPrivateUsage]
+            assert match_pattern("/test", "/test") is True
+            assert match_pattern("/test", "/other") is False
 
     def test_wildcard_match(self):
         """Test wildcard pattern matching."""
         with patch("rnhttp.server.RNS"):
-            server = HttpServer(port=8080)
-
-            assert server._match_pattern("/api/*", "/api/users") is True  # pyright: ignore[reportPrivateUsage]
-            assert server._match_pattern("/api/*", "/api/users/123") is True  # pyright: ignore[reportPrivateUsage]
-            assert server._match_pattern("/api/*", "/other") is False  # pyright: ignore[reportPrivateUsage]
+            assert match_pattern("/api/*", "/api/users") is True
+            assert match_pattern("/api/*", "/api/users/123") is True
+            assert match_pattern("/api/*", "/other") is False
 
 
-class TestHttpServerHandleRequest:
-    """Tests for request handling."""
+class TestHttpServerGetHandler:
+    """Tests for handler lookup."""
 
-    async def test_handle_request_exact_match(self):
-        """Test handling request with exact path match."""
+    def test_get_handler_exact_match(self):
+        """Test getting handler with exact path match."""
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
-            mock_handler = MagicMock(return_value=HttpResponse(status=200, reason="OK"))
+            mock_handler = MagicMock()
             server._handlers[("GET", "/test")] = mock_handler  # pyright: ignore[reportPrivateUsage]
 
-            request = HttpRequest(method="GET", path="/test")
-            response = server._handle_request(None, request)  # pyright: ignore[reportArgumentType, reportPrivateUsage]
-            if isinstance(response, Awaitable):
-                response = await response
+            request_io = RequestIO()
+            _ = request_io.write(b"GET /test HTTP/1.1\r\nHost: example.com\r\n\r\n")
+            _ = request_io.headers
 
-            mock_handler.assert_called_once_with(request)
-            assert response.status == 200
+            handler = server.get_handler(request_io)
+            assert handler == mock_handler
 
-    async def test_handle_request_wildcard_match(self):
-        """Test handling request with wildcard match."""
+    def test_get_handler_wildcard_match(self):
+        """Test getting handler with wildcard match."""
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
-            mock_handler = MagicMock(return_value=HttpResponse(status=200, reason="OK"))
+            mock_handler = MagicMock()
             server._handlers[("GET", "/api/*")] = mock_handler  # pyright: ignore[reportPrivateUsage]
 
-            request = HttpRequest(method="GET", path="/api/users")
-            response = server._handle_request(None, request)  # pyright: ignore[reportArgumentType, reportPrivateUsage]
-            if isinstance(response, Awaitable):
-                _ = await response
+            request_io = RequestIO()
+            _ = request_io.write(
+                b"GET /api/users HTTP/1.1\r\nHost: example.com\r\n\r\n"
+            )
+            _ = request_io.headers
 
-            mock_handler.assert_called_once_with(request)
+            handler = server.get_handler(request_io)
+            assert handler == mock_handler
 
-    async def test_handle_request_not_found(self):
-        """Test handling request with no matching handler."""
+    def test_get_handler_not_found(self):
+        """Test getting handler with no matching handler."""
         with patch("rnhttp.server.RNS"):
             server = HttpServer(port=8080)
 
-            request = HttpRequest(method="GET", path="/nonexistent")
-            response = server._handle_request(None, request)  # pyright: ignore[reportArgumentType, reportPrivateUsage]
-            if isinstance(response, Awaitable):
-                response = await response
+            request_io = RequestIO()
+            _ = request_io.write(
+                b"GET /nonexistent HTTP/1.1\r\nHost: example.com\r\n\r\n"
+            )
+            _ = request_io.headers
 
-            assert response.status == 404  # noqa: PLR2004
-            assert response.body == b"Not Found"
+            handler = server.get_handler(request_io)
+            assert handler is None
 
 
 class TestHttpServerLifecycle:

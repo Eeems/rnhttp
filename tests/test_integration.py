@@ -245,28 +245,37 @@ class HttpIntegrationStack:
         response_code: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         assert self.server_hash is not None
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-um",
-                "rnhttp.client",
-                *(["--response-code"] if response_code else []),
-                f"--config={self.rns_config}",
-                self.server_hash,
-                str(self.server_port),
-                method,
-                path,
-                *[f"--header={k}: {v}" for k, v in (headers or {}).items()],
-                *(["--body", body.decode("utf-8", errors="replace")] if body else []),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-        print(f"CLIENT STDOUT: {result.stdout}")
-        print(f"CLIENT STDERR: {result.stderr}")
-        return result
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-um",
+                    "rnhttp.client",
+                    *(["--response-code"] if response_code else []),
+                    f"--config={self.rns_config}",
+                    self.server_hash,
+                    str(self.server_port),
+                    method,
+                    path,
+                    *[f"--header={k}: {v}" for k, v in (headers or {}).items()],
+                    *(
+                        ["--body", body.decode("utf-8", errors="replace")]
+                        if body
+                        else []
+                    ),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+            print(f"CLIENT STDOUT: {result.stdout}")
+            print(f"CLIENT STDERR: {result.stderr}")
+            return result
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+            print(f"CLIENT STDOUT: {e.stdout.decode() if e.stdout else ''}")
+            print(f"CLIENT STDERR: {e.stderr.decode() if e.stderr else ''}")
+            raise
 
     def cleanup(self) -> None:
         if not self.server_proc:
@@ -311,7 +320,7 @@ class TestHttpIntegration:
             stack.start_server()
             result = stack.run_client("/", "GET", response_code=True)
             assert result.returncode == 0, "Request failed"
-            assert result.stdout == "200\n", "Incorrect return code"
+            assert result.stdout == "200", "Incorrect return code"
 
         finally:
             stack.cleanup()
@@ -332,7 +341,7 @@ class TestHttpIntegration:
                 response_code=True,
             )
             assert result.returncode == 0, "Request failed"
-            assert result.stdout == "200\n", "Incorrect return code"
+            assert result.stdout == "200", "Incorrect return code"
 
         finally:
             stack.cleanup()
@@ -348,7 +357,7 @@ class TestHttpIntegration:
             stack.start_server()
             result = stack.run_client("/nonexistent", "GET", response_code=True)
             assert result.returncode == 1, "Request succeeded"
-            assert result.stdout == "404\n", "Incorrect return code"
+            assert result.stdout == "404", "Incorrect return code"
 
         finally:
             stack.cleanup()
@@ -369,7 +378,7 @@ class TestHttpIntegration:
                 response_code=True,
             )
             assert result.returncode == 0, "Request failed"
-            assert result.stdout == "200\n", "Incorrect return code"
+            assert result.stdout == "200", "Incorrect return code"
 
         finally:
             stack.cleanup()
@@ -385,7 +394,7 @@ class TestHttpIntegration:
             stack.start_server()
             result = stack.run_client("/resource", "DELETE", response_code=True)
             assert result.returncode == 0, "Request failed"
-            assert result.stdout == "200\n", "Incorrect return code"
+            assert result.stdout == "200", "Incorrect return code"
 
         finally:
             stack.cleanup()
@@ -406,7 +415,7 @@ class TestHttpIntegration:
                 response_code=True,
             )
             assert result.returncode == 0, "Request failed"
-            assert result.stdout == "200\n", "Incorrect return code"
+            assert result.stdout == "200", "Incorrect return code"
 
         finally:
             stack.cleanup()

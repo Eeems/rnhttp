@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import io
 import os
 import sys
 import threading
@@ -12,10 +13,7 @@ from typing import (
 
 import RNS
 
-from .types import (
-    HttpRequest,
-    HttpResponse,
-)
+from ._http import URL, Request, Response, ResponseIO
 
 
 class TransportError(Exception):
@@ -111,18 +109,18 @@ class HttpClient:
         path: str,
         method: str = "GET",
         headers: dict[str, str] | None = None,
-        body: bytes | None = None,
-    ) -> HttpResponse:
+        body: io.Reader[bytes] | bytes | None = None,
+    ) -> Response:
         """Send an HTTP request.
 
         Args:
             path: Request path
             method: HTTP method (GET, POST, etc.)
             headers: Additional headers
-            body: Request body
+            body: Request body (can be io.Reader[bytes] for streaming)
 
         Returns:
-            HttpResponse object
+            Response object
 
         Raises:
             TransportError: If request fails
@@ -133,77 +131,67 @@ class HttpClient:
         if self._link is None:
             raise TransportError("Not connected")
 
-        request = HttpRequest(
-            method=method,
-            path=path,
-            headers=headers or {},
-            body=body,
-        )
+        if headers is None:
+            headers = {}
 
-        response_data = await self._send_request(bytes(request))
-        return HttpResponse.parse(response_data)
+        host = headers.get("host", None)
+        if host is None:
+            host = self._destination_hash.hex()
 
-    async def _send_request(self, data: bytes) -> bytes:
-        """Send request data and wait for response."""
+        url = URL(host=host, path=path)
+        request = Request(method=method, url=url, headers=headers, body=body)
+        return await self._send_request(request)
+
+    async def _send_request(self, request: Request) -> Response:
+        """Send request and wait for response."""
         if self._link is None:
             raise TransportError("Not connected")
-
-        channel = self._link.get_channel()
-
-        response_event = threading.Event()
-        response_data: bytes | None = None
-        response_error: Exception | None = None
+        response_io = ResponseIO()
 
         def on_reader_ready(ready: int) -> None:
-            nonlocal response_data, response_error, response_event, buffer
-            try:
-                response_data = buffer.read(ready)
-                response_event.set()
+            nonlocal link_buffer, response_io
+            data = link_buffer.read(ready)
+            _ = response_io.write(data)
+            response_io.flush()
 
-            except Exception as e:
-                response_error = e
-                response_event.set()
-
-        buffer = RNS.Buffer.create_bidirectional_buffer(1, 0, channel, on_reader_ready)
-        _ = buffer.write(data)
-        buffer.flush()
-
-        if not response_event.wait(self._request_timeout):
-            raise TransportError("Request timeout")
-
-        if response_error is not None:
-            raise TransportError(  # pyright: ignore[reportUnreachable]
-                f"Request failed: {response_error}"
-            ) from response_error
-
-        if response_data is None:
-            raise TransportError("No response received")
-
-        return response_data  # pyright: ignore[reportUnreachable]
+        link_buffer = RNS.Buffer.create_bidirectional_buffer(
+            0,
+            0,
+            self._link.get_channel(),
+            on_reader_ready,
+        )
+        request.sendto(link_buffer)
+        response = Response(
+            status=response_io.status,
+            reason=response_io.reason,
+            body=response_io,
+        )
+        response.headers = response_io.headers
+        return response
 
     async def get(
         self,
         path: str,
         headers: dict[str, str] | None = None,
-    ) -> HttpResponse:
+    ) -> Response:
         """Send GET request."""
         return await self.request(path, "GET", headers)
 
     async def post(
         self,
         path: str,
-        body: bytes | None = None,
+        body: io.Reader[bytes] | bytes | None = None,
         headers: dict[str, str] | None = None,
-    ) -> HttpResponse:
+    ) -> Response:
         """Send POST request."""
         return await self.request(path, "POST", headers, body)
 
     async def put(
         self,
         path: str,
-        body: bytes | None = None,
+        body: io.Reader[bytes] | bytes | None = None,
         headers: dict[str, str] | None = None,
-    ) -> HttpResponse:
+    ) -> Response:
         """Send PUT request."""
         return await self.request(path, "PUT", headers, body)
 
@@ -211,7 +199,7 @@ class HttpClient:
         self,
         path: str,
         headers: dict[str, str] | None = None,
-    ) -> HttpResponse:
+    ) -> Response:
         """Send DELETE request."""
         return await self.request(path, "DELETE", headers)
 
@@ -252,7 +240,7 @@ async def main():
         dest="verbose",
     )
     _ = parser.add_argument(
-        "-H", "--header", action="append", help="Add header (Format: Name: Value)"
+        "-H", "--header", action="append", help="Add header (Format: <name>=<value>)"
     )
     _ = parser.add_argument("--body", type=str, help="Request body")
     _ = parser.add_argument(
@@ -281,21 +269,22 @@ async def main():
                 headers[name] = value
 
     assert isinstance(args.body, str | None)  # pyright: ignore[reportAny]
-    body = args.body.encode("utf-8") if args.body else None
+    body: io.Reader[bytes] | bytes | None = (
+        args.body.encode("utf-8") if args.body else None
+    )
 
     assert isinstance(args.destination, str)  # pyright: ignore[reportAny]
     assert isinstance(args.port, int)  # pyright: ignore[reportAny]
     assert isinstance(args.identity, str | None)  # pyright: ignore[reportAny]
-    client = HttpClient(
-        destination_hash=args.destination,
-        port=args.port,
-        identity_path=args.identity,
-    )
-
     assert isinstance(args.method, str)  # pyright: ignore[reportAny]
     assert isinstance(args.path, str)  # pyright: ignore[reportAny]
+
     try:
-        async with client:
+        async with HttpClient(
+            destination_hash=args.destination,
+            port=args.port,
+            identity_path=args.identity,
+        ) as client:
             response = await client.request(
                 path=args.path,
                 method=args.method.upper(),
@@ -304,21 +293,26 @@ async def main():
             )
             assert isinstance(args.response_code, bool)  # pyright: ignore[reportAny]
             if args.response_code:
-                print(response.status)
+                _ = sys.stdout.write(str(response.status))
 
             else:
-                _ = sys.stdout.write(
-                    f"{response.version} {response.status} {response.reason}\n"
-                )
-                for name, value in response.headers.items():
-                    _ = sys.stdout.write(f"{name}: {value}\n")
+                _ = sys.stdout.write(f"HTTP/1.1 {response.status} {response.reason}\n")
+                for name, values in response.headers.items():
+                    for value in values:
+                        _ = sys.stdout.write(f"{name}: {value}\n")
 
                 _ = sys.stdout.write("\n")
-                if response.body:
-                    _ = sys.stdout.buffer.write(response.body)
+                if response.body is not None:
+                    if isinstance(response.body, bytes):
+                        _ = sys.stdout.buffer.write(response.body)
+                    else:
+                        while True:
+                            chunk = response.body.read(4096)
+                            if not chunk:
+                                break
+                            _ = sys.stdout.buffer.write(chunk)
 
-                _ = sys.stdout.buffer.flush()
-
+            _ = sys.stdout.buffer.flush()
             sys.exit(0 if response.status < 400 else 1)
 
     except TransportError as e:

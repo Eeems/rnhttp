@@ -22,12 +22,6 @@ class HttpParserError(Exception):
     pass
 
 
-class HttpSerializerError(Exception):
-    """Exception raised for HTTP serialization errors."""
-
-    pass
-
-
 class RequestCallbacks:
     """Callback handler for request parsing."""
 

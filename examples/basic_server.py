@@ -6,11 +6,8 @@ import os
 
 import RNS
 
-from rnhttp import (
-    HttpRequest,
-    HttpResponse,
-    HttpServer,
-)
+from rnhttp import HttpServer
+from rnhttp._http import RequestIO, Response
 
 
 async def main() -> None:
@@ -39,36 +36,31 @@ async def main() -> None:
     )
 
     @server.route("/")
-    async def handle_root(_request: HttpRequest) -> HttpResponse:  # pyright: ignore[reportUnusedFunction]
+    def handle_root(_request: RequestIO, response: Response) -> None:
         """Handle requests to root path."""
-        return HttpResponse(
-            status=200,
-            headers={"Content-Type": "text/plain"},
-            body=b"Hello from RNS HTTP Server!",
-        )
+        response.status = 200
+        response.add_header("Content-Type", "text/plain")
+        response.body = b"Hello from RNS HTTP Server!"
 
     @server.route("/hello")
-    async def handle_hello(_request: HttpRequest) -> HttpResponse:  # pyright: ignore[reportUnusedFunction]
+    def handle_hello(_request: RequestIO, response: Response) -> None:
         """Handle requests to /hello path."""
-        return HttpResponse(
-            status=200,
-            headers={"Content-Type": "application/json"},
-            body=b'{"message": "Hello, World!"}',
-        )
+        response.status = 200
+        response.add_header("Content-Type", "application/json")
+        response.body = b'{"message": "Hello, World!"}'
 
     @server.route("/echo/*")
-    async def handle_echo(request: HttpRequest) -> HttpResponse:  # pyright: ignore[reportUnusedFunction]
+    def handle_echo(request: RequestIO, response: Response) -> None:
         """Handle requests to /echo/* path - echoes back the path."""
-        return HttpResponse(
-            status=200,
-            headers={"Content-Type": "text/plain"},
-            body=f"Echo: {request.path}".encode(),
-        )
+        response.status = 200
+        response.add_header("Content-Type", "text/plain")
+        path = request.url.path or "/echo"
+        response.body = f"Echo: {path}".encode()
 
     @server.route("/resource")
-    async def handle_resource(request: HttpRequest) -> HttpResponse:  # pyright: ignore[reportUnusedFunction]
-        """Handle requests to /echo/* path - echoes back the path."""
-        return HttpResponse(status=200)
+    def handle_resource(_request: RequestIO, response: Response) -> None:
+        """Handle requests to /resource path."""
+        response.status = 200
 
     print("Starting RNS HTTP Server...")
     print("=" * 50)

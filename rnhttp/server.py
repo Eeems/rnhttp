@@ -5,23 +5,27 @@ import asyncio
 import io
 import os
 import sys
+import threading
 from collections.abc import (
+    AsyncGenerator,
     Awaitable,
     Callable,
+    Generator,
+)
+from types import (
+    AsyncGeneratorType,
+    GeneratorType,
 )
 from typing import TypeVar
 
 import RNS
 
-from .types import (
-    HttpRequest,
-    HttpResponse,
-)
+from ._http import RequestIO, Response
 
-HandlerType = (
-    Callable[[HttpRequest], HttpResponse]
-    | Callable[[HttpRequest], Awaitable[HttpResponse]]
-)
+HandlerType = Callable[
+    [RequestIO, Response],
+    Generator[None] | AsyncGenerator[None] | None,
+]
 
 T = TypeVar("T")
 
@@ -34,6 +38,36 @@ def await_in_sync(awaitable: Awaitable[T]) -> T:
 
     except RuntimeError:
         return asyncio.run(awaitable)  # pyright: ignore[reportUnknownVariableType, reportArgumentType]
+
+
+def consume_generator(gen: Generator[None]) -> None:
+    try:
+        for _ in gen:
+            pass
+
+    except StopIteration:
+        pass
+
+
+def consume_async_generator(gen: AsyncGenerator[None]) -> None:
+    async def fn(gen: AsyncGenerator[None]) -> None:
+        try:
+            async for _ in gen:
+                pass
+
+        except StopAsyncIteration:
+            pass
+
+    await_in_sync(fn(gen))
+
+
+def match_pattern(pattern: str, path: str) -> bool:
+    """Simple pattern matching for routes."""
+    # TODO make this not so shit
+    if pattern.endswith("*"):
+        return path.startswith(pattern[:-1])
+
+    return path == pattern
 
 
 class HttpServer:
@@ -52,9 +86,7 @@ class HttpServer:
         self._read_timeout: float = read_timeout
         self._destination: RNS.Destination | None = None
         self._handlers: dict[tuple[str, str], HandlerType] = {}
-        self._default_handler: HandlerType | None = None
         self._running: bool = False
-        self._links: dict[int, tuple[RNS.Link, io.BufferedRWPair]] = {}
 
     @staticmethod
     def _default_identity_path() -> str:
@@ -82,12 +114,14 @@ class HttpServer:
 
         Usage:
             @server.route("/api/data")
-            def handle_request(request: HttpRequest) -> HttpResponse:
-                return HttpResponse(status=200, body=b"OK")
+            def handle_request(request: RequestIO, response: Response) -> None:
+                response.status = 200
+                response.body = b"OK"
 
             @server.route("/api/data", method="POST")
-            def handle_post(request: HttpRequest) -> HttpResponse:
-                return HttpResponse(status=200, body=b"OK")
+            def handle_post(request: RequestIO, response: Response) -> None:
+                response.status = 200
+                response.body = b"OK"
         """
 
         def decorator(handler: HandlerType) -> HandlerType:
@@ -102,7 +136,7 @@ class HttpServer:
 
     def set_default_handler(self, handler: HandlerType) -> None:
         """Set a default handler for all requests."""
-        self._default_handler = handler
+        self._handlers[("*", "*")] = handler
 
     async def start(self) -> None:
         """Start the HTTP server."""
@@ -117,124 +151,117 @@ class HttpServer:
         )
 
         self._running = True
-        self._destination.set_link_established_callback(self._on_link)  # pyright: ignore[reportUnknownMemberType]
+        self._destination.set_link_established_callback(self.on_link_established)  # pyright: ignore[reportUnknownMemberType]
         _ = self._destination.accepts_links(True)  # pyright: ignore[reportUnknownMemberType]
         _ = self._destination.announce()  # pyright: ignore[reportUnknownMemberType]
 
     async def stop(self) -> None:
         """Stop the HTTP server."""
         self._running = False
-        for link, _ in list(self._links.values()):
-            link.teardown()
-
-        self._links.clear()
         if self._destination is not None:
             _ = self._destination.accepts_links(False)  # pyright: ignore[reportUnknownMemberType]
 
-    def _on_link(self, link: RNS.Link) -> None:
+    def on_link_established(self, link: RNS.Link) -> None:
         """Handle incoming link."""
-        if not self._running:
-            link.teardown()
-            return
+
+        def callback(ready: int) -> None:
+            nonlocal request_io, link_buffer
+            print(f"callback({ready})")
+            self.on_reader_ready(link_buffer, request_io, ready)
 
         print(f"Connected: {link}")
+        request_io = RequestIO()
+        link.set_link_closed_callback(self.on_link_closed)  # pyright: ignore[reportUnknownMemberType]
+        link_buffer = RNS.Buffer.create_bidirectional_buffer(
+            0,
+            0,
+            link.get_channel(),
+            callback,
+        )
+        threading.Thread(
+            target=self.handle_request,
+            args=(
+                link,
+                request_io,
+                link_buffer,
+            ),
+        ).start()
 
-        def _on_reader_ready(ready: int) -> None:
-            """Handle incoming data on reader."""
-            nonlocal link
-            print(f"Reader ready {link}: {ready}")
-            _, buffer = self._links.get(id(link), (None, None))
-            if buffer is None:
-                return
-
-            request: HttpRequest | Awaitable[HttpRequest] | None = None
-            response: HttpResponse | Awaitable[HttpResponse] | None = None
-            try:
-                request = HttpRequest.parse(buffer.read(ready))
-
-            except Exception as e:
-                response = HttpResponse(
-                    status=400,
-                    body=str(e).encode("utf-8"),
-                )
-
-            if response is None:
-                assert request is not None
-                try:
-                    response = self._handle_request(link, request)
-
-                except Exception as e:
-                    response = HttpResponse(
-                        status=500,
-                        body=str(e).encode("utf-8"),
-                    )
-
-            await_in_sync(self._send_response(buffer, response))
-
-        link.set_link_closed_callback(self._on_close)  # pyright: ignore[reportUnknownMemberType]
-        channel = link.get_channel()
-        buffer = RNS.Buffer.create_bidirectional_buffer(0, 1, channel, _on_reader_ready)
-        self._links[id(link)] = (link, buffer)
-
-    async def _send_response(
+    def on_reader_ready(
         self,
-        writer: io.BufferedRWPair,
-        response: HttpResponse | Awaitable[HttpResponse],
+        buffer: io.BufferedRWPair,
+        request_io: RequestIO,
+        ready: int,
     ) -> None:
-        """Send response back on the link."""
-        if isinstance(response, Awaitable):
-            response = await response
+        """Handle incoming data on reader."""
+        data = buffer.read(ready)
+        _ = request_io.write(data)
+        request_io.flush()
 
-        try:
-            _ = writer.write(bytes(response))
-            writer.flush()
-
-        except Exception:  # TODO narrow this to actual exception
-            link_id = None
-            for lid, (_, buffer) in self._links.items():
-                if buffer is writer:
-                    link_id = lid
-                    break
-
-            if link_id is not None:
-                link, _ = self._links.pop(link_id, (None, None))
-                if link is not None:
-                    link.teardown()
-
-    def _on_close(self, link: RNS.Link) -> None:
+    def on_link_closed(self, link: RNS.Link) -> None:
         """Handle link close."""
-        _ = self._links.pop(id(link), None)
+        print(f"Closed: {link}")
 
-    def _handle_request(
-        self, link: RNS.Link, request: HttpRequest
-    ) -> HttpResponse | Awaitable[HttpResponse]:
-        """Handle incoming HTTP request."""
-        path = request.path
-        method = request.method.upper()
-        print(f"{link} {method} {path}")
+    def get_handler(self, request_io: RequestIO) -> HandlerType | None:
+        """Find handler for request. Returns None if no handler found."""
+        method = request_io.method
+        path = request_io.url.path
+        if path is None:
+            return None
 
         key = (method, path)
         if key in self._handlers:
-            return self._handlers[key](request)
+            return self._handlers[key]
 
         for (_, p), handler in self._handlers.items():
-            if self._match_pattern(p, path):
-                return handler(request)
+            if match_pattern(p, path):
+                return handler
 
-        if self._default_handler:
-            return self._default_handler(request)
+        return None
 
-        return HttpResponse(
-            status=404,
-            reason="Not Found",
-            body=b"Not Found",
-        )
+    def handle_request(
+        self,
+        link: RNS.Link,
+        request_io: RequestIO,
+        writer: io.BufferedRWPair,
+    ) -> None:
+        """Handle incoming HTTP request."""
+        method = request_io.method
+        path = request_io.url.path
+        print(f"{link} {method} {path}")
 
-    def _match_pattern(self, pattern: str, path: str) -> bool:
-        """Simple pattern matching for routes."""
-        if pattern.endswith("*"):
-            return path.startswith(pattern[:-1])
-        return path == pattern
+        handler = self.get_handler(request_io)
+
+        if handler is None:
+            while request_io.read(4096):
+                pass
+
+            Response(404, body=b"Not Found").sendto(writer)
+            return
+
+        response = Response(status=200)
+        try:
+            gen = handler(request_io, response)
+            if isinstance(gen, GeneratorType | AsyncGeneratorType):
+                sendto_thread = threading.Thread(target=response.sendto, args=(writer,))
+                resume_thread = threading.Thread(
+                    target=(
+                        consume_async_generator
+                        if isinstance(gen, AsyncGeneratorType)
+                        else consume_generator
+                    ),
+                    args=(gen,),
+                )
+                sendto_thread.start()
+                resume_thread.start()
+                sendto_thread.join()
+                resume_thread.join()
+
+            else:
+                response.sendto(writer)
+
+        except Exception as e:
+            Response(500, body=str(e).encode()).sendto(writer)
 
     @property
     def port(self) -> int:
@@ -285,11 +312,9 @@ async def main():
         identity_path=args.identity,
     )
 
-    def default_handler(_request: HttpRequest) -> HttpResponse:
-        return HttpResponse(
-            status=200,
-            body=b"Hello world!",
-        )
+    def default_handler(_request: RequestIO, response: Response) -> None:
+        response.status = 200
+        response.body = b"Hello world!"
 
     server.set_default_handler(default_handler)
 
