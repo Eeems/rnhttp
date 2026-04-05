@@ -1,6 +1,5 @@
 import io
 import threading
-import time
 from collections.abc import (
     Callable,
     Sized,
