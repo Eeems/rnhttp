@@ -59,11 +59,10 @@ class PipeIO(io.RawIOBase):
 
             offset += chunk_size
             self._available += chunk_size
-
+            self._data_available.set()
             if self._available >= self._capacity:
                 self._write_ready.clear()
 
-        self._data_available.set()
         return length
 
     @override

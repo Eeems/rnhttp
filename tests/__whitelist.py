@@ -1,3 +1,5 @@
+_.buffer  # unused attribute (tests/test_memory.py:80)
+_.buffer  # unused attribute (tests/test_memory.py:128)
 _.status  # unused attribute (tests/test_server.py:81)
 handler1  # unused function (tests/test_server.py:91)
 handler2  # unused function (tests/test_server.py:95)

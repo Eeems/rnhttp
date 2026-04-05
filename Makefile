@@ -83,9 +83,7 @@ test: requirements-dev ## Run tests
 
 .PHONY: list-tests
 list-tests: ## List all available tests
-	@if [ ! -f ${VENV_BIN_ACTIVATE} ];then \
-	  $(MAKE) requirements-dev >/dev/null; \
-	fi
+	@$(MAKE) requirements-dev >/dev/null
 	@. ${VENV_BIN_ACTIVATE}; \
 	python -m pytest \
 	  --collect-only \
