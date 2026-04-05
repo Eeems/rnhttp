@@ -87,7 +87,7 @@ class TestCallbacksIOMemory:
         chunk_size = 4096
         headers = (
             b"POST /test HTTP/1.1\r\n"
-            b"Host: example.com\r\n"
+            + b"Host: example.com\r\n"
             + f"Content-Length: {body_size}\r\n".encode()
             + b"\r\n"
         )
