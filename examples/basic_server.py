@@ -58,6 +58,9 @@ async def main() -> None:
         response.body = f"Echo: {path}".encode()
 
     @server.route("/resource")
+    @server.route("/resource", "POST")
+    @server.route("/resource", "PUT")
+    @server.route("/resource", "DELETE")
     def handle_resource(_request: RequestIO, response: Response) -> None:
         """Handle requests to /resource path."""
         response.status = 200

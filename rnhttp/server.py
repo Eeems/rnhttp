@@ -272,35 +272,33 @@ class HttpServer:
         """Handle incoming link."""
 
         def callback(ready: int) -> None:
-            nonlocal request_io, link_buffer
-            self.on_reader_ready(link_buffer, request_io, ready)
+            nonlocal request_io, reader
+            self.on_reader_ready(ready, reader, request_io)
 
         print(f"Connected: {link}")
         request_io = RequestIO()
         link.set_link_closed_callback(self.on_link_closed)  # pyright: ignore[reportUnknownMemberType]
-        link_buffer = RNS.Buffer.create_bidirectional_buffer(
-            0,
-            0,
-            link.get_channel(),
-            callback,
-        )
+        channel = link.get_channel()
+        reader = RNS.Buffer.create_reader(0, channel, callback)
+        writer = RNS.Buffer.create_writer(0, channel)
         threading.Thread(
             target=self.handle_request,
-            args=(
-                link,
-                request_io,
-                link_buffer,
-            ),
+            args=(link, request_io, writer),
         ).start()
 
     def on_reader_ready(
         self,
-        buffer: io.BufferedRWPair,
-        request_io: RequestIO,
         ready: int,
+        reader: io.BufferedReader,
+        request_io: RequestIO,
     ) -> None:
         """Handle incoming data on reader."""
-        data = buffer.read(ready)
+        if not ready:
+            reader.close()
+            request_io.close()
+            return
+
+        data = reader.read(ready)
         _ = request_io.write(data)
         request_io.flush()
 
@@ -345,19 +343,15 @@ class HttpServer:
         self,
         link: RNS.Link,
         request_io: RequestIO,
-        writer: io.BufferedRWPair,
+        writer: io.BufferedWriter,
     ) -> None:
         """Handle incoming HTTP request."""
         method = request_io.method
         path = request_io.url.path
         print(f"{link} {method} {path}")
-
         result = self.get_handler(request_io)
-
         if result is None:
-            while request_io.read(4096):
-                pass
-
+            request_io.close()
             Response(404, body=b"Not Found").sendto(writer)
             print(f"{link} {method} {path} 404")
             return
@@ -367,9 +361,7 @@ class HttpServer:
         try:
             params = extract_params(route_pattern, path or "", param_specs)
         except ValueError:
-            while request_io.read(4096):
-                pass
-
+            request_io.close()
             Response(400, body=b"Bad Request").sendto(writer)
             print(f"{link} {method} {path} 400")
             return
@@ -377,20 +369,17 @@ class HttpServer:
         try:
             # Extract params from path (may raise ValueError -> 400)
             gen = handler(request_io, response, **params)
+            request_io.close()
             if isinstance(gen, GeneratorType | AsyncGeneratorType):
                 sendto_thread = threading.Thread(target=response.sendto, args=(writer,))
-                resume_thread = threading.Thread(
-                    target=(
-                        consume_async_generator
-                        if isinstance(gen, AsyncGeneratorType)
-                        else consume_generator
-                    ),
-                    args=(gen,),
-                )
+                if isinstance(gen, AsyncGeneratorType):
+                    consume_async_generator(gen)
+
+                else:
+                    consume_generator(gen)
+
                 sendto_thread.start()
-                resume_thread.start()
                 sendto_thread.join()
-                resume_thread.join()
 
             else:
                 response.sendto(writer)
@@ -398,9 +387,7 @@ class HttpServer:
             print(f"{link} {method} {path} {response.status}")
 
         except Exception as e:
-            while request_io.read(4096):
-                pass
-
+            request_io.close()
             Response(500, body=str(e).encode()).sendto(writer)
             print(f"{link} {method} {path} 500")
             raise

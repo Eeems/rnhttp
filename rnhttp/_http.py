@@ -9,7 +9,6 @@ from types import TracebackType
 from typing import (
     TYPE_CHECKING,
     Self,
-    cast,
     final,
 )
 
@@ -20,126 +19,13 @@ from httptools import (
 )
 
 from ._compat import override
+from ._pipe import PipeIO
 
 if TYPE_CHECKING:
     from _typeshed import (
         ReadableBuffer,
         WriteableBuffer,
     )
-
-
-class PipeIO(io.RawIOBase):
-    """Fixed-size ring buffer. writes block when full. good for backpressure."""
-
-    def __init__(self, capacity: int = 65536) -> None:
-        self._buffer: bytearray = bytearray(capacity)
-        self._capacity: int = capacity
-        self._read_pos: int = 0
-        self._write_pos: int = 0
-        self._available: int = 0
-        self._data_available: threading.Event = threading.Event()
-        self._write_ready: threading.Event = threading.Event()
-        self._write_ready.set()
-        self._eof: bool = False
-
-    @override
-    def write(self, data: ReadableBuffer, /) -> int:
-        data = cast(
-            memoryview[bytes],
-            data if isinstance(data, memoryview) else memoryview(data),
-        )
-        length = len(data)
-        offset = 0
-
-        while offset < length:
-            while self._available >= self._capacity:
-                _ = self._write_ready.wait()
-                self._write_ready.clear()
-
-            space = self._capacity - self._available
-            chunk_size = min(space, length - offset)
-
-            write_pos = self._write_pos
-            avail = self._capacity - write_pos
-
-            if chunk_size <= avail:
-                self._buffer[write_pos : write_pos + chunk_size] = data[  # pyright: ignore[reportCallIssue, reportArgumentType]
-                    offset : offset + chunk_size
-                ]
-                self._write_pos = (write_pos + chunk_size) % self._capacity
-            else:
-                first = chunk_size - avail
-                self._buffer[write_pos:] = data[offset : offset + avail]  # pyright: ignore[reportCallIssue, reportArgumentType]
-                self._buffer[:first] = data[offset + avail : offset + chunk_size]  # pyright: ignore[reportCallIssue, reportArgumentType]
-                self._write_pos = first
-
-            offset += chunk_size
-            self._available += chunk_size
-
-            if self._available >= self._capacity:
-                self._write_ready.clear()
-
-        self._data_available.set()
-        return length
-
-    @override
-    def read(self, size: int = -1, /) -> bytes:
-        if size == 0:
-            return b""
-
-        result = bytearray()
-
-        while True:
-            if self._available == 0:
-                if self._eof:
-                    break
-                _ = self._data_available.wait()
-                self._data_available.clear()
-                continue
-
-            if size < 0:
-                to_read = self._available
-            else:
-                remaining_needed = size - len(result)
-                if remaining_needed <= 0:
-                    break
-                to_read = min(remaining_needed, self._available)
-
-            read_pos = self._read_pos
-            avail = self._capacity - read_pos
-
-            if to_read <= avail:
-                result.extend(self._buffer[read_pos : read_pos + to_read])
-                self._read_pos = (read_pos + to_read) % self._capacity
-            else:
-                result.extend(self._buffer[read_pos:])
-                result.extend(self._buffer[: to_read - avail])
-                self._read_pos = to_read - avail
-
-            self._available -= to_read
-            self._write_ready.set()
-
-            if self._available == 0:
-                self._data_available.clear()
-
-            if size > 0 and len(result) >= size:
-                break
-
-        if self._available > 0:
-            self._data_available.set()
-
-        return bytes(result)
-
-    @override
-    def close(self) -> None:
-        self._eof = True
-        self._data_available.set()
-        self._write_ready.set()
-
-    @override
-    def flush(self) -> None:
-        if self._available > 0 and not self._data_available.is_set():
-            self._data_available.set()
 
 
 class URL:
@@ -390,9 +276,13 @@ class CallbacksIO(io.RawIOBase):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        self.close()
+        return super().__exit__(exc_type, exc_val, exc_tb)
+
+    @override
+    def close(self, /) -> None:
         self.callbacks.drain()
         self.buffer.close()
-        return super().__exit__(exc_type, exc_val, exc_tb)
 
     def _on_body(self, data: bytes) -> None:
         _ = self.buffer.write(data)
@@ -429,7 +319,6 @@ class CallbacksIO(io.RawIOBase):
 
     @override
     def readall(self, /) -> bytes:
-        _ = self.callbacks.wait()
         return self.read(-1)
 
     @override
@@ -744,6 +633,7 @@ if __name__ == "__main__":
         _ = request.write(b"\r\n")
         time.sleep(0.1)
         _ = request.write(b"test")
+        request.close()
 
     print("Request()")
     with RequestIO() as request:
@@ -765,6 +655,7 @@ if __name__ == "__main__":
         _ = response.write(b"\r\n")
         time.sleep(0.1)
         _ = response.write(b"Hello, World!")
+        response.close()
 
     print("Response()")
     with ResponseIO() as response:
@@ -784,6 +675,7 @@ if __name__ == "__main__":
             URL(host="example.com", path="/", query="test=1", fragment="test"),
             body=b"test",
         ).sendto(request)
+        request.close()
 
     print("Request()")
     with RequestIO() as request:
@@ -803,6 +695,7 @@ if __name__ == "__main__":
             URL(host="example.com", path="/", query="test=1", fragment="test"),
             body=io.BytesIO(b"test"),
         ).sendto(request)
+        request.close()
 
     print("Request() # chunked")
     with RequestIO() as request:
@@ -818,6 +711,7 @@ if __name__ == "__main__":
     def feed(response: ResponseIO) -> None:  # pyright: ignore[reportRedeclaration]
         time.sleep(0.1)
         Response(200, body=b"test").sendto(response)
+        response.close()
 
     print("Response()")
     with ResponseIO() as response:
@@ -833,6 +727,7 @@ if __name__ == "__main__":
     def feed(response: ResponseIO) -> None:
         time.sleep(0.1)
         Response(200, body=io.BytesIO(b"test")).sendto(response)
+        response.close()
 
     print("Response() # chunked")
     with ResponseIO() as response:

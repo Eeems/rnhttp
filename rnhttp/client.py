@@ -13,7 +13,11 @@ from typing import (
 
 import RNS
 
-from ._http import URL, Request, Response, ResponseIO
+from ._http import (
+    URL,
+    Request,
+    ResponseIO,
+)
 
 
 class TransportError(Exception):
@@ -110,7 +114,7 @@ class HttpClient:
         method: str = "GET",
         headers: dict[str, str] | None = None,
         body: io.Reader[bytes] | bytes | None = None,
-    ) -> Response:
+    ) -> ResponseIO:
         """Send an HTTP request.
 
         Args:
@@ -142,38 +146,35 @@ class HttpClient:
         request = Request(method=method, url=url, headers=headers, body=body)
         return await self._send_request(request)
 
-    async def _send_request(self, request: Request) -> Response:
+    async def _send_request(self, request: Request) -> ResponseIO:
         """Send request and wait for response."""
         if self._link is None:
             raise TransportError("Not connected")
-        response_io = ResponseIO()
 
         def on_reader_ready(ready: int) -> None:
-            nonlocal link_buffer, response_io
-            data = link_buffer.read(ready)
+            nonlocal reader, response_io
+            if not ready:
+                reader.close()
+                response_io.close()
+                return
+
+            data = reader.read(ready)
             _ = response_io.write(data)
             response_io.flush()
 
-        link_buffer = RNS.Buffer.create_bidirectional_buffer(
-            0,
-            0,
-            self._link.get_channel(),
-            on_reader_ready,
-        )
-        request.sendto(link_buffer)
-        response = Response(
-            status=response_io.status,
-            reason=response_io.reason,
-            body=response_io,
-        )
-        response.headers = response_io.headers
-        return response
+        channel = self._link.get_channel()
+        writer = RNS.Buffer.create_writer(0, channel)
+        response_io = ResponseIO()
+        reader = RNS.Buffer.create_reader(0, channel, on_reader_ready)
+        request.sendto(writer)
+        writer.close()
+        return response_io
 
     async def get(
         self,
         path: str,
         headers: dict[str, str] | None = None,
-    ) -> Response:
+    ) -> ResponseIO:
         """Send GET request."""
         return await self.request(path, "GET", headers)
 
@@ -182,7 +183,7 @@ class HttpClient:
         path: str,
         body: io.Reader[bytes] | bytes | None = None,
         headers: dict[str, str] | None = None,
-    ) -> Response:
+    ) -> ResponseIO:
         """Send POST request."""
         return await self.request(path, "POST", headers, body)
 
@@ -191,7 +192,7 @@ class HttpClient:
         path: str,
         body: io.Reader[bytes] | bytes | None = None,
         headers: dict[str, str] | None = None,
-    ) -> Response:
+    ) -> ResponseIO:
         """Send PUT request."""
         return await self.request(path, "PUT", headers, body)
 
@@ -199,7 +200,7 @@ class HttpClient:
         self,
         path: str,
         headers: dict[str, str] | None = None,
-    ) -> Response:
+    ) -> ResponseIO:
         """Send DELETE request."""
         return await self.request(path, "DELETE", headers)
 
@@ -302,17 +303,15 @@ async def main():
                         _ = sys.stdout.write(f"{name}: {value}\n")
 
                 _ = sys.stdout.write("\n")
-                if response.body is not None:
-                    if isinstance(response.body, bytes):
-                        _ = sys.stdout.buffer.write(response.body)
-                    else:
-                        while True:
-                            chunk = response.body.read(4096)
-                            if not chunk:
-                                break
-                            _ = sys.stdout.buffer.write(chunk)
+                _ = sys.stdout.flush()
+                while True:
+                    chunk = response.read(4096)
+                    if not chunk:
+                        break
 
-            _ = sys.stdout.buffer.flush()
+                    _ = sys.stdout.buffer.write(chunk)
+                    _ = sys.stdout.flush()
+
             sys.exit(0 if response.status < 400 else 1)
 
     except TransportError as e:

@@ -4,7 +4,7 @@
 import threading
 import time
 
-from rnhttp._http import PipeIO
+from rnhttp._pipe import PipeIO
 
 
 class TestPipeIOBasic:
