@@ -70,7 +70,8 @@ def shared_rnsd() -> Generator[Path, Any, None]:  # pyright: ignore[reportExplic
     with tempfile.TemporaryDirectory() as config_dir:
         rns_config = os.path.join(config_dir, "config")
         with open(rns_config, "w") as f:
-            _ = f.write(RETICULUM_CONFIG)
+            size = f.write(RETICULUM_CONFIG)
+            assert size == len(RETICULUM_CONFIG)
 
         tries = 3
         timeout = 5
@@ -157,7 +158,7 @@ def shared_rnsd() -> Generator[Path, Any, None]:  # pyright: ignore[reportExplic
 
         rnsd_proc.terminate()
         try:
-            _ = rnsd_proc.wait(timeout=5)
+            assert not rnsd_proc.wait(timeout=5)
 
         except subprocess.TimeoutExpired:
             rnsd_proc.kill()
@@ -324,6 +325,7 @@ class HttpIntegrationStack:
                     raise SetupError(
                         f"socks_proxy exited early with code {proc.returncode}"
                     )
+
                 continue
 
             print(f"SOCKS_PROXY: {line.rstrip()}", file=sys.stderr)
@@ -334,10 +336,12 @@ class HttpIntegrationStack:
         if not started:
             proc.terminate()
             try:
-                _ = proc.wait(timeout=5)
+                assert not proc.wait(timeout=5)
+
             except subprocess.TimeoutExpired:
                 proc.kill()
                 _ = proc.wait()
+
             raise SetupError("SOCKS proxy did not start")
 
         # Start a thread to drain stdout so it doesn't block
@@ -386,6 +390,7 @@ class HttpIntegrationStack:
             print(f"CLIENT STDOUT: {result.stdout}")
             print(f"CLIENT STDERR: {result.stderr}")
             return result
+
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
             print(f"CLIENT STDOUT: {e.stdout.decode() if e.stdout else ''}")
             print(f"CLIENT STDERR: {e.stderr.decode() if e.stderr else ''}")
@@ -395,20 +400,24 @@ class HttpIntegrationStack:
         if self.server_proc:
             self.server_proc.terminate()
             try:
-                _ = self.server_proc.wait(timeout=5)
+                assert not self.server_proc.wait(timeout=5)
+
             except subprocess.TimeoutExpired:
                 self.server_proc.kill()
-                _ = self.server_proc.wait()
+                assert self.server_proc.wait()
+
             if self.server_proc.stdout is not None:
                 print(self.server_proc.stdout.read())
 
         if self.proxy_proc:
             self.proxy_proc.terminate()
             try:
-                _ = self.proxy_proc.wait(timeout=5)
+                assert not self.proxy_proc.wait(timeout=5)
+
             except subprocess.TimeoutExpired:
                 self.proxy_proc.kill()
-                _ = self.proxy_proc.wait()
+                assert self.proxy_proc.wait()
+
             if self.proxy_proc.stdout is not None:
                 print(self.proxy_proc.stdout.read())
 
@@ -625,10 +634,12 @@ class TestHttpIntegration:
             if socks_proc is not None:
                 socks_proc.terminate()
                 try:
-                    _ = socks_proc.wait(timeout=5)
+                    assert not socks_proc.wait(timeout=5)
+
                 except subprocess.TimeoutExpired:
                     socks_proc.kill()
-                    _ = socks_proc.wait()
+                    assert socks_proc.wait()
+
             stack.cleanup()
 
     def test_proxy_server_http(self) -> None:
@@ -678,8 +689,10 @@ class TestHttpIntegration:
             if socks_proc is not None:
                 socks_proc.terminate()
                 try:
-                    _ = socks_proc.wait(timeout=5)
+                    assert not socks_proc.wait(timeout=5)
+
                 except subprocess.TimeoutExpired:
                     socks_proc.kill()
-                    _ = socks_proc.wait()
+                    assert socks_proc.wait()
+
             stack.cleanup()
