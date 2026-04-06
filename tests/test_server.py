@@ -67,12 +67,6 @@ class TestHttpServer:
             server = HttpServer(port=8080)
             assert server.destination_hash is None
 
-    def test_is_running_false_when_not_started(self) -> None:
-        """Test is_running is False before server starts."""
-        with patch("rnhttp.server.RNS"):
-            server = HttpServer(port=8080)
-            assert server.is_running is False
-
 
 class TestHttpServerRoutes:
     """Tests for server routing."""
@@ -240,7 +234,6 @@ class TestHttpServerLifecycle:
         server = HttpServer(port=8080)
 
         asyncio.run(server.start())
-        asyncio.run(server.stop())
 
         assert server._running is False  # pyright: ignore[reportPrivateUsage]
         mock_destination_instance.accepts_links.assert_called_with(False)  # pyright: ignore[reportAny]

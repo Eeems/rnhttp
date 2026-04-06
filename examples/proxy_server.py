@@ -134,14 +134,12 @@ if __name__ == "__main__":
         print("Press Ctrl+C to stop.")
 
         try:
-            while server.is_running:
-                await asyncio.sleep(1)
+            await asyncio.sleep(float("infinity"))
 
         except KeyboardInterrupt:
             pass
 
         finally:
-            await server.stop()
             print("\nProxy server stopped.")
 
     asyncio.run(loop())

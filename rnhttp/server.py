@@ -262,14 +262,7 @@ class HttpServer:
 
         self._running = True
         self._destination.set_link_established_callback(self.on_link_established)  # pyright: ignore[reportUnknownMemberType]
-        _ = self._destination.accepts_links(True)  # pyright: ignore[reportUnknownMemberType]
         _ = self._destination.announce()  # pyright: ignore[reportUnknownMemberType]
-
-    async def stop(self) -> None:
-        """Stop the HTTP server."""
-        self._running = False
-        if self._destination is not None:
-            _ = self._destination.accepts_links(False)  # pyright: ignore[reportUnknownMemberType]
 
     def on_link_established(self, link: RNS.Link) -> None:
         """Handle incoming link."""
@@ -422,11 +415,6 @@ class HttpServer:
         assert isinstance(self._destination.hexhash, str | None)  # pyright: ignore[reportAny]
         return self._destination.hexhash
 
-    @property
-    def is_running(self) -> bool:
-        """Check if server is running."""
-        return self._running
-
 
 async def main():
     parser = argparse.ArgumentParser(description="HTTP/1.1 server over Reticulum")
@@ -468,14 +456,10 @@ async def main():
     print(f"Destination hash: {server.destination_hash}", file=sys.stderr, flush=True)
 
     try:
-        while server.is_running:
-            await asyncio.sleep(1)
+        await asyncio.sleep(float("infinity"))
 
     except KeyboardInterrupt:
         pass
-
-    finally:
-        await server.stop()
 
 
 if __name__ == "__main__":

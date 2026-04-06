@@ -89,8 +89,6 @@ if __name__ == "__main__":
             await asyncio.sleep(float("infinity"))
 
         except KeyboardInterrupt:
-            print("\nStopping server...")
-            await server.stop()
             print("Server stopped.")
 
     asyncio.run(loop())
