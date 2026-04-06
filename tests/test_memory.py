@@ -30,44 +30,47 @@ class TestPipeIOMemory:
     def test_memory_stays_within_capacity(self) -> None:
         """Memory usage should stay within buffer capacity."""
         capacity = 1024
-        pipe = PipeIO(capacity=capacity)
-        baseline = get_rss()
+        with PipeIO(capacity=capacity) as pipe:
+            baseline = get_rss()
+            data = b"x" * capacity
+            size = pipe.write(data)
+            assert size == capacity
+            growth = get_rss() - baseline
 
-        data = b"x" * capacity
-        _ = pipe.write(data)
-
-        growth = get_rss() - baseline
         assert growth < 102400
 
     def test_memory_bounded_after_many_writes(self) -> None:
         """Memory stays bounded after many writes with reads in between."""
         capacity = 4096
-        pipe = PipeIO(capacity=capacity)
-        baseline = get_rss()
+        with PipeIO(capacity=capacity) as pipe:
+            baseline = get_rss()
+            for _ in range(100):
+                size = pipe.write(b"x" * capacity)
+                assert size == capacity
+                data = pipe.read(capacity)
+                assert len(data) == capacity
 
-        for _ in range(100):
-            _ = pipe.write(b"x" * capacity)
-            _ = pipe.read(capacity)
+            growth = get_rss() - baseline
 
-        growth = get_rss() - baseline
         assert growth < 102400
 
     def test_memory_bounded_with_large_write(self) -> None:
         """Memory stays bounded when writing more than capacity."""
         capacity = 1024
-        pipe = PipeIO(capacity=capacity)
-        baseline = get_rss()
-
         total_to_write = 100 * 1024
         written = 0
         chunk = b"x" * capacity
+        with PipeIO(capacity=capacity) as pipe:
+            baseline = get_rss()
+            while written < total_to_write:
+                size = pipe.write(chunk)
+                assert size == capacity
+                data = pipe.read(capacity)
+                assert data == chunk
+                written += capacity
 
-        while written < total_to_write:
-            _ = pipe.write(chunk)
-            _ = pipe.read(capacity)
-            written += capacity
+            growth = get_rss() - baseline
 
-        growth = get_rss() - baseline
         assert growth < 102400
 
 
@@ -103,10 +106,13 @@ class TestCallbacksIOMemory:
             # Write body in small chunks to exercise backpressure
             sent = 0
             while sent < body_size:
-                chunk = b"x" * min(chunk_size, body_size - sent)
-                _ = request_io.write(chunk)
-                sent += len(chunk)
+                to_write = min(chunk_size, body_size - sent)
+                chunk = b"x" * to_write
+                size = request_io.write(chunk)
+                assert size == to_write
+                sent += to_write
                 time.sleep(0.001)
+
             request_io.close()
             write_done.set()
 
@@ -116,32 +122,29 @@ class TestCallbacksIOMemory:
                 data = request_io.read(chunk_size)
                 if not data:
                     break
+
                 total += len(data)
+
             assert total == body_size
             read_done.set()
 
-        write_thread = threading.Thread(target=writer)
-        read_thread = threading.Thread(target=reader)
+        write_thread = threading.Thread(target=writer, daemon=True)
+        read_thread = threading.Thread(target=reader, daemon=True)
 
         # Start reader first so body_event is set before writer processes body
         read_thread.start()
         time.sleep(0.05)
         write_thread.start()
 
-        try:
-            write_thread.join(timeout=5)
-            assert write_thread.is_alive() is False
+        write_thread.join(timeout=5)
+        assert write_thread.is_alive() is False
 
-            read_thread.join(timeout=5)
-            assert read_thread.is_alive() is False
-            assert read_done.is_set()
+        read_thread.join(timeout=5)
+        assert read_thread.is_alive() is False
+        assert read_done.is_set()
 
-            growth = get_rss() - baseline
-            assert growth < 1048576  # < 1MB — proves 5MB body didn't buffer fully
-        finally:
-            request_io.close()
-            write_thread.join(timeout=2)
-            read_thread.join(timeout=2)
+        growth = get_rss() - baseline
+        assert growth < 1048576  # < 1MB — proves 5MB body didn't buffer fully
 
     def test_response_body_memory_bounded(self) -> None:
         """Response body streaming should use bounded memory with large payloads."""
@@ -167,10 +170,13 @@ class TestCallbacksIOMemory:
             # Write body in small chunks to exercise backpressure
             sent = 0
             while sent < body_size:
-                chunk = b"x" * min(chunk_size, body_size - sent)
-                _ = response_io.write(chunk)
-                sent += len(chunk)
+                to_write = min(chunk_size, body_size - sent)
+                chunk = b"x" * to_write
+                size = response_io.write(chunk)
+                assert size == to_write
+                sent += to_write
                 time.sleep(0.001)
+
             response_io.close()
             write_done.set()
 
@@ -180,32 +186,29 @@ class TestCallbacksIOMemory:
                 data = response_io.read(chunk_size)
                 if not data:
                     break
+
                 total += len(data)
+
             assert total == body_size
             read_done.set()
 
-        write_thread = threading.Thread(target=writer)
-        read_thread = threading.Thread(target=reader)
+        write_thread = threading.Thread(target=writer, daemon=True)
+        read_thread = threading.Thread(target=reader, daemon=True)
 
         # Start reader first so body_event is set before writer processes body
         read_thread.start()
         time.sleep(0.05)
         write_thread.start()
 
-        try:
-            write_thread.join(timeout=5)
-            assert write_thread.is_alive() is False
+        write_thread.join(timeout=5)
+        assert write_thread.is_alive() is False
 
-            read_thread.join(timeout=5)
-            assert read_thread.is_alive() is False
-            assert read_done.is_set()
+        read_thread.join(timeout=5)
+        assert read_thread.is_alive() is False
+        assert read_done.is_set()
 
-            growth = get_rss() - baseline
-            assert growth < 1048576  # < 1MB — proves 5MB body didn't buffer fully
-        finally:
-            response_io.close()
-            write_thread.join(timeout=2)
-            read_thread.join(timeout=2)
+        growth = get_rss() - baseline
+        assert growth < 1048576  # < 1MB — proves 5MB body didn't buffer fully
 
 
 class TestBackpressure:
@@ -214,29 +217,27 @@ class TestBackpressure:
     def test_write_blocks_at_capacity(self) -> None:
         """Write blocks when buffer reaches capacity."""
         pipe = PipeIO(capacity=10)
-        _ = pipe.write(b"1234567890")
-
+        size = pipe.write(b"1234567890")
+        assert size == 10
         write_completed = threading.Event()
 
         def write_more() -> None:
-            _ = pipe.write(b"extra")
+            size = pipe.write(b"extra")
+            assert size == 5
             write_completed.set()
 
-        thread = threading.Thread(target=write_more)
+        thread = threading.Thread(target=write_more, daemon=True)
         thread.start()
 
-        try:
-            time.sleep(0.1)
-            assert not write_completed.is_set()
+        time.sleep(0.1)
+        assert not write_completed.is_set()
 
-            _ = pipe.read(5)
+        data = pipe.read(5)
+        assert data == b"12345"
 
-            thread.join(timeout=2)
-            assert thread.is_alive() is False
-            assert write_completed.is_set()
-        finally:
-            pipe.close()
-            thread.join(timeout=2)
+        thread.join(timeout=2)
+        assert thread.is_alive() is False
+        assert write_completed.is_set()
 
     def test_read_blocks_when_empty(self) -> None:
         """Read blocks when buffer is empty."""
@@ -249,22 +250,19 @@ class TestBackpressure:
             result.append(data)
             read_completed.set()
 
-        thread = threading.Thread(target=read_data)
+        thread = threading.Thread(target=read_data, daemon=True)
         thread.start()
 
-        try:
-            time.sleep(0.1)
-            assert not read_completed.is_set()
+        time.sleep(0.1)
+        assert not read_completed.is_set()
 
-            _ = pipe.write(b"hello")
+        size = pipe.write(b"hello")
+        assert size == 5
 
-            thread.join(timeout=2)
-            assert thread.is_alive() is False
-            assert read_completed.is_set()
-            assert result[0] == b"hello"
-        finally:
-            pipe.close()
-            thread.join(timeout=2)
+        thread.join(timeout=2)
+        assert thread.is_alive() is False
+        assert read_completed.is_set()
+        assert result[0] == b"hello"
 
     def test_read_returns_on_eof(self) -> None:
         """Read returns available data on EOF."""
@@ -284,42 +282,36 @@ class TestBackpressure:
         pipe = PipeIO(capacity=capacity)
 
         # Fill the buffer
-        _ = pipe.write(b"x" * capacity)
+        size = pipe.write(b"x" * capacity)
+        assert size == capacity
 
         write_completed = threading.Event()
         total_read = [0]
 
         def write_more() -> None:
-            _ = pipe.write(b"y" * 10000)
+            size = pipe.write(b"y" * 10000)
+            assert size == 10000
+            pipe.close()
             write_completed.set()
 
-        thread = threading.Thread(target=write_more)
+        thread = threading.Thread(target=write_more, daemon=True)
         thread.start()
 
-        try:
-            # Should be blocked
-            time.sleep(0.2)
-            assert not write_completed.is_set()
+        # Should be blocked
+        time.sleep(0.2)
+        assert not write_completed.is_set()
 
-            # Drain buffer to let writer proceed
-            while not write_completed.is_set():
-                if pipe._available > 0:  # pyright: ignore[reportPrivateUsage]
-                    data = pipe.read(-1)
-                    total_read[0] += len(data)
-                else:
-                    time.sleep(0.01)
+        # Read any remaining data
+        while True:
+            data = pipe.read()
+            if not data:
+                break
 
-            # Read any remaining data
-            while pipe._available > 0:  # pyright: ignore[reportPrivateUsage]
-                data = pipe.read(-1)
-                total_read[0] += len(data)
+            total_read[0] += len(data)
 
-            thread.join(timeout=5)
-            assert thread.is_alive() is False
-            assert total_read[0] == 10000 + capacity
-        finally:
-            pipe.close()
-            thread.join(timeout=2)
+        thread.join(timeout=5)
+        assert thread.is_alive() is False
+        assert total_read[0] == 10000 + capacity
 
 
 class TestLargePayloadStreaming:
@@ -335,37 +327,34 @@ class TestLargePayloadStreaming:
         chunk_size = 1024
         written = 0
         read_total = 0
-        done = threading.Event()
 
         def writer() -> None:
             nonlocal written
             while written < total_size:
-                chunk = b"x" * min(chunk_size, total_size - written)
-                _ = pipe.write(chunk)
+                to_write = min(chunk_size, total_size - written)
+                chunk = b"x" * to_write
+                size = pipe.write(chunk)
+                assert size == to_write
                 written += len(chunk)
-            pipe.close()
-            done.set()
 
-        write_thread = threading.Thread(target=writer)
+            pipe.close()
+
+        write_thread = threading.Thread(target=writer, daemon=True)
         write_thread.start()
 
-        try:
-            while not done.is_set() or pipe._available > 0:  # pyright: ignore[reportPrivateUsage]
-                if pipe._available > 0:  # pyright: ignore[reportPrivateUsage]
-                    data = pipe.read(-1)
-                    read_total += len(data)
-                else:
-                    time.sleep(0.01)
+        while True:
+            data = pipe.read()
+            if not data:
+                break
 
-            write_thread.join(timeout=10)
-            assert write_thread.is_alive() is False
-            assert read_total == total_size
+            read_total += len(data)
 
-            growth = get_rss() - baseline
-            assert growth < 102400
-        finally:
-            pipe.close()
-            write_thread.join(timeout=2)
+        write_thread.join(timeout=10)
+        assert write_thread.is_alive() is False
+        assert read_total == total_size
+
+        growth = get_rss() - baseline
+        assert growth < 102400
 
     def test_multiple_sequential_requests(self) -> None:
         """Multiple requests don't accumulate memory."""
@@ -378,25 +367,26 @@ class TestLargePayloadStreaming:
             chunk = 1024
             written = 0
             read_total = 0
-            done = threading.Event()
 
             def writer() -> None:
                 nonlocal written
                 while written < total:
-                    _ = pipe.write(b"x" * min(chunk, total - written))
+                    to_write = min(chunk, total - written)
+                    size = pipe.write(b"x" * to_write)
+                    assert size == to_write
                     written += chunk
-                pipe.close()
-                done.set()
 
-            write_thread = threading.Thread(target=writer)
+                pipe.close()
+
+            write_thread = threading.Thread(target=writer, daemon=True)
             write_thread.start()
 
-            while not done.is_set() or pipe._available > 0:  # pyright: ignore[reportPrivateUsage]
-                if pipe._available > 0:  # pyright: ignore[reportPrivateUsage]
-                    data = pipe.read(-1)
-                    read_total += len(data)
-                else:
-                    time.sleep(0.01)
+            while True:
+                data = pipe.read()
+                if not data:
+                    break
+
+                read_total += len(data)
 
             write_thread.join(timeout=5)
             assert write_thread.is_alive() is False
