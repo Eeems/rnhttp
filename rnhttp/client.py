@@ -35,8 +35,6 @@ class HttpClient:
         port: int,
         identity_path: str | None = None,
         connect_timeout: float = 30.0,
-        request_timeout: float = 60.0,
-        read_timeout: float = 30.0,
     ) -> None:
         if isinstance(destination_hash, str):
             destination_hash = bytes.fromhex(destination_hash)
@@ -45,8 +43,6 @@ class HttpClient:
         self._port: int = port
         self._identity_path: str = identity_path or self._default_identity_path()
         self._connect_timeout: float = connect_timeout
-        self._request_timeout: float = request_timeout
-        self._read_timeout: float = read_timeout
         self._identity: RNS.Identity | None = None
         self._link: RNS.Link | None = None
 
@@ -251,6 +247,13 @@ async def main():
         help="Print the response code and exit",
         dest="response_code",
     )
+    _ = parser.add_argument(
+        "--connect-timeout",
+        type=float,
+        help="Connection timeout",
+        default=30.0,
+        dest="connect_timeout",
+    )
     args = parser.parse_args()
 
     assert isinstance(args.config, str | None)  # pyright: ignore[reportAny]
@@ -279,12 +282,14 @@ async def main():
     assert isinstance(args.identity, str | None)  # pyright: ignore[reportAny]
     assert isinstance(args.method, str)  # pyright: ignore[reportAny]
     assert isinstance(args.path, str)  # pyright: ignore[reportAny]
+    assert isinstance(args.connect_timeout, float)  # pyright: ignore[reportAny]
 
     try:
         async with HttpClient(
             destination_hash=args.destination,
             port=args.port,
             identity_path=args.identity,
+            connect_timeout=args.connect_timeout,
         ) as client:
             response = await client.request(
                 path=args.path,

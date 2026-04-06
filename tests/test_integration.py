@@ -355,6 +355,7 @@ class HttpIntegrationStack:
         headers: dict[str, str] | None = None,
         timeout: int = 30,
         response_code: bool = False,
+        connect_timeout: float = 10.0,
     ) -> subprocess.CompletedProcess[str]:
         assert self.server_hash is not None
         try:
@@ -375,6 +376,7 @@ class HttpIntegrationStack:
                         if body
                         else []
                     ),
+                    f"--connect-timeout={connect_timeout}",
                 ],
                 capture_output=True,
                 text=True,
