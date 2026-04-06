@@ -42,34 +42,37 @@ class TestURL:
             fragment="top",
         )
         assert str(u) == "https://user:pass@example.com:8080/foo/bar?a=1&b=2#top"
+        assert bytes(u) == b"https://user:pass@example.com:8080/foo/bar?a=1&b=2#top"
 
     def test_minimal_url(self) -> None:
         u = URL(host="example.com", path="/")
         assert str(u) == "example.com/"
+        assert bytes(u) == b"example.com/"
 
     def test_url_with_schema_and_host(self) -> None:
         u = URL(schema="http", host="localhost")
         assert str(u) == "http://localhost"
+        assert bytes(u) == b"http://localhost"
 
     def test_url_with_port(self) -> None:
         u = URL(host="localhost", port=3000)
         assert str(u) == "localhost:3000"
+        assert bytes(u) == b"localhost:3000"
 
     def test_url_with_query_only(self) -> None:
         u = URL(path="/search", query="q=test")
         assert str(u) == "/search?q=test"
+        assert bytes(u) == b"/search?q=test"
 
     def test_url_with_fragment_only(self) -> None:
         u = URL(path="/page", fragment="section")
         assert str(u) == "/page#section"
-
-    def test_url_bytes(self) -> None:
-        u = URL(host="example.com", path="/")
-        assert bytes(u) == b"example.com/"
+        assert bytes(u) == b"/page#section"
 
     def test_url_with_path_query_fragment(self) -> None:
         u = URL(path="/", query="test=1", fragment="test")
         assert str(u) == "/?test=1#test"
+        assert bytes(u) == b"/?test=1#test"
 
 
 # ---------------------------------------------------------------------------
@@ -167,10 +170,11 @@ class TestCallbacks:
         cb = Callbacks()
         cb.on_message_begin()
 
-        result: list[bool] = []
+        result: bool | None = None
 
         def waiter() -> None:
-            result.append(cb.wait(timeout=2))
+            nonlocal result
+            result = cb.wait(timeout=2)
 
         t = threading.Thread(target=waiter)
         t.start()
@@ -179,7 +183,7 @@ class TestCallbacks:
         cb.on_body(b"hello")
         cb.on_message_complete()
         t.join(timeout=3)
-        assert result == [True]
+        assert result is True
 
     def test_wait_headers(self) -> None:
         cb = Callbacks()
@@ -218,6 +222,7 @@ class TestCallbacks:
         cb.on_body(b"hi")
         cb.on_message_complete()
         cb.on_status(b"OK")
+        assert called
         assert "begin" in called
         assert "header" in called
         assert "headers_complete" in called
@@ -262,6 +267,7 @@ class TestHttpSendTo:
         try:
             _ = s.get_header("Set-Cookie")
             assert False, "should have raised"
+
         except ValueError:
             pass
 
@@ -293,9 +299,10 @@ class TestHttpSendTo:
     def test_sendto_bytes_body(self) -> None:
         r = Request("POST", URL(host="example.com", path="/submit"), body=b"hello")
         r.headers["X-Custom"] = ["value"]
-        buf = io.BytesIO()
-        _ = r.sendto(buf)
-        out = buf.getvalue()
+        with io.BytesIO() as buf:
+            _ = r.sendto(buf)
+            out = buf.getvalue()
+
         assert b"X-Custom: value\r\n" in out
         assert b"content-length: 5\r\n" in out
         assert out.endswith(b"\r\nhello")
@@ -305,12 +312,9 @@ class TestHttpSendTo:
 
         # Use a custom reader that is not Sized
         class UnsizedReader:
-            _data: bytes
-            _pos: int
-
             def __init__(self, data: bytes) -> None:
-                self._data = data
-                self._pos = 0
+                self._data: bytes = data
+                self._pos: int = 0
 
             def read(self, size: int = -1) -> bytes:
                 if self._pos >= len(self._data):
@@ -324,27 +328,30 @@ class TestHttpSendTo:
             URL(host="example.com", path="/stream"),
             body=UnsizedReader(b"hello"),
         )
-        buf = io.BytesIO()
-        _ = r.sendto(buf)
-        out = buf.getvalue()
+        with io.BytesIO() as buf:
+            _ = r.sendto(buf)
+            out = buf.getvalue()
+
         # chunked format: size\r\ndata\r\n...0\r\n\r\n
         assert b"5\r\nhello\r\n" in out
         assert b"0\r\n\r\n" in out
 
     def test_sendto_bytes_body_not_chunked(self) -> None:
         r = Request("POST", URL(host="example.com", path="/"), body=b"hello")
-        buf = io.BytesIO()
-        _ = r.sendto(buf)
-        out = buf.getvalue()
+        with io.BytesIO() as buf:
+            _ = r.sendto(buf)
+            out = buf.getvalue()
+
         # bytes body uses content-length, not chunked
         assert b"content-length: 5\r\n" in out
         assert b"chunked" not in out.lower()
 
     def test_sendto_empty_body(self) -> None:
         r = Request("GET", URL(host="example.com", path="/"))
-        buf = io.BytesIO()
-        _ = r.sendto(buf)
-        out = buf.getvalue()
+        with io.BytesIO() as buf:
+            _ = r.sendto(buf)
+            out = buf.getvalue()
+
         assert out.endswith(b"\r\n")
 
     def test_sendto_with_explicit_headers(self) -> None:
@@ -378,9 +385,10 @@ class TestRequest:
 
     def test_sendto(self) -> None:
         r = Request("POST", URL(host="example.com", path="/submit"), body=b"data")
-        buf = io.BytesIO()
-        _ = r.sendto(buf)
-        out = buf.getvalue()
+        with io.BytesIO() as buf:
+            _ = r.sendto(buf)
+            out = buf.getvalue()
+
         assert out.startswith(b"POST /submit HTTP/1.1\r\n")
         assert b"host: example.com\r\n" in out
         assert b"content-length: 4\r\n" in out
@@ -392,9 +400,10 @@ class TestRequest:
             URL(host="example.com", path="/stream"),
             body=io.BytesIO(b"streamed"),
         )
-        buf = io.BytesIO()
-        _ = r.sendto(buf)
-        out = buf.getvalue()
+        with io.BytesIO() as buf:
+            _ = r.sendto(buf)
+            out = buf.getvalue()
+
         # BytesIO is not bytes, so sendto uses chunked encoding
         assert b"8\r\nstreamed\r\n" in out
         assert b"0\r\n\r\n" in out
@@ -429,18 +438,20 @@ class TestResponse:
 
     def test_sendto(self) -> None:
         r = Response(200, body=b"hello")
-        buf = io.BytesIO()
-        _ = r.sendto(buf)
-        out = buf.getvalue()
+        with io.BytesIO() as buf:
+            _ = r.sendto(buf)
+            out = buf.getvalue()
+
         assert out.startswith(b"HTTP/1.1 200 OK\r\n")
         assert b"content-length: 5\r\n" in out
         assert out.endswith(b"\r\nhello")
 
     def test_sendto_chunked(self) -> None:
         r = Response(200, body=io.BytesIO(b"streamed"))
-        buf = io.BytesIO()
-        _ = r.sendto(buf)
-        out = buf.getvalue()
+        with io.BytesIO() as buf:
+            _ = r.sendto(buf)
+            out = buf.getvalue()
+
         # BytesIO is not bytes, so sendto uses chunked encoding
         assert b"8\r\nstreamed\r\n" in out
         assert b"0\r\n\r\n" in out
@@ -455,40 +466,43 @@ class TestRequestIO:
     """Tests for RequestIO parsing correctness."""
 
     def test_parse_request_url(self) -> None:
-        rio = RequestIO()
-        _ = rio.write(b"GET /path?q=1 HTTP/1.1\r\nHost: example.com\r\n\r\n")
-        rio.close()
-        url = rio.url
+        with RequestIO() as rio:
+            _ = rio.write(b"GET /path?q=1 HTTP/1.1\r\nHost: example.com\r\n\r\n")
+            url = rio.url
+
         assert url.path == "/path"
         assert url.query == "q=1"
 
     def test_parse_request_method(self) -> None:
-        rio = RequestIO()
-        _ = rio.write(b"POST /submit HTTP/1.1\r\nHost: example.com\r\n\r\n")
-        rio.close()
+        with RequestIO() as rio:
+            _ = rio.write(b"POST /submit HTTP/1.1\r\nHost: example.com\r\n\r\n")
+
         assert rio.method == "POST"
 
     def test_parse_request_headers(self) -> None:
-        rio = RequestIO()
-        _ = rio.write(b"GET / HTTP/1.1\r\nHost: example.com\r\nX-Custom: value\r\n\r\n")
-        rio.close()
-        headers = rio.headers
+        with RequestIO() as rio:
+            _ = rio.write(
+                b"GET / HTTP/1.1\r\nHost: example.com\r\nX-Custom: value\r\n\r\n"
+            )
+            headers = rio.headers
+
         assert "x-custom" in headers
         assert headers["x-custom"] == ["value"]
 
     def test_parse_request_body(self) -> None:
-        rio = RequestIO()
+        with RequestIO() as rio:
 
-        def writer() -> None:
-            _ = rio.write(
-                b"POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nhello"
-            )
-            rio.close()
+            def writer() -> None:
+                _ = rio.write(
+                    b"POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nhello"
+                )
+                rio.close()
 
-        t = threading.Thread(target=writer)
-        t.start()
-        body = rio.readall()
-        t.join(timeout=5)
+            t = threading.Thread(target=writer)
+            t.start()
+            body = rio.readall()
+            t.join(timeout=5)
+
         assert body == b"hello"
 
     def test_context_manager(self) -> None:
@@ -497,50 +511,53 @@ class TestRequestIO:
         # after exit, buffer should be closed
 
     def test_readline(self) -> None:
-        rio = RequestIO()
+        with RequestIO() as rio:
 
-        def writer() -> None:
-            _ = rio.write(
-                b"POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 11\r\n\r\nline1\nline2"
-            )
-            rio.close()
+            def writer() -> None:
+                _ = rio.write(
+                    b"POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 11\r\n\r\nline1\nline2"
+                )
+                rio.close()
 
-        t = threading.Thread(target=writer)
-        t.start()
-        line = rio.readline()
-        t.join(timeout=5)
+            t = threading.Thread(target=writer)
+            t.start()
+            line = rio.readline()
+            t.join(timeout=5)
+
         assert line == b"line1\n"
 
     def test_readlines(self) -> None:
-        rio = RequestIO()
+        with RequestIO() as rio:
 
-        def writer() -> None:
-            _ = rio.write(
-                b"POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 11\r\n\r\nline1\nline2"
-            )
-            rio.close()
+            def writer() -> None:
+                _ = rio.write(
+                    b"POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 11\r\n\r\nline1\nline2"
+                )
+                rio.close()
 
-        t = threading.Thread(target=writer)
-        t.start()
-        lines = rio.readlines()
-        t.join(timeout=5)
+            t = threading.Thread(target=writer)
+            t.start()
+            lines = rio.readlines()
+            t.join(timeout=5)
+
         assert lines == [b"line1\n", b"line2"]
 
     def test_readinto(self) -> None:
         """readinto delegates to buffer; test that it works when buffer supports it."""
-        rio = RequestIO()
+        with RequestIO() as rio:
 
-        def writer() -> None:
-            _ = rio.write(
-                b"POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nhello"
-            )
-            rio.close()
+            def writer() -> None:
+                _ = rio.write(
+                    b"POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nhello"
+                )
+                rio.close()
 
-        t = threading.Thread(target=writer)
-        t.start()
-        # read() works; readinto would too if PipeIO implemented it
-        body = rio.read()
-        t.join(timeout=5)
+            t = threading.Thread(target=writer)
+            t.start()
+            # read() works; readinto would too if PipeIO implemented it
+            body = rio.read()
+            t.join(timeout=5)
+
         assert body == b"hello"
 
 
@@ -553,44 +570,44 @@ class TestResponseIO:
     """Tests for ResponseIO parsing correctness."""
 
     def test_parse_response_status(self) -> None:
-        rio = ResponseIO()
-        _ = rio.write(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-        rio.close()
+        with ResponseIO() as rio:
+            _ = rio.write(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+
         assert rio.status == 200
+        assert rio.reason == "OK"
 
     def test_parse_response_reason(self) -> None:
-        rio = ResponseIO()
-        _ = rio.write(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
-        rio.close()
+        with ResponseIO() as rio:
+            _ = rio.write(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+
+        assert rio.status == 404
         assert rio.reason == "Not Found"
 
     def test_parse_response_headers(self) -> None:
-        rio = ResponseIO()
-        _ = rio.write(
-            b"HTTP/1.1 200 OK\r\nX-Custom: value\r\nContent-Length: 0\r\n\r\n"
-        )
-        rio.close()
-        headers = rio.headers
+        with ResponseIO() as rio:
+            _ = rio.write(
+                b"HTTP/1.1 200 OK\r\nX-Custom: value\r\nContent-Length: 0\r\n\r\n"
+            )
+            headers = rio.headers
+
         assert "x-custom" in headers
         assert headers["x-custom"] == ["value"]
 
     def test_parse_response_body(self) -> None:
-        rio = ResponseIO()
-
-        def writer() -> None:
-            _ = rio.write(b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!")
-            rio.close()
-
-        t = threading.Thread(target=writer)
-        t.start()
-        body = rio.readall()
-        t.join(timeout=5)
-        assert body == b"Hello, World!"
-
-    def test_context_manager(self) -> None:
         with ResponseIO() as rio:
-            _ = rio.write(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-        # after exit, buffer should be closed
+
+            def writer() -> None:
+                _ = rio.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!"
+                )
+                rio.close()
+
+            t = threading.Thread(target=writer)
+            t.start()
+            body = rio.readall()
+            t.join(timeout=5)
+
+        assert body == b"Hello, World!"
 
 
 # ---------------------------------------------------------------------------
