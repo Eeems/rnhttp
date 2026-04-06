@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import builtins
 import io
 import os
 import sys
@@ -18,6 +19,8 @@ from types import (
 )
 from typing import (
     Any,
+    Concatenate,
+    ParamSpec,
     TypeVar,
 )
 
@@ -28,12 +31,12 @@ from ._http import (
     Response,
 )
 
-HandlerType = Callable[
-    [RequestIO, Response],
-    Generator[None] | AsyncGenerator[None] | None,
-]
-
-ParamSpec = list[tuple[str, type]]
+P = ParamSpec("P")
+HandlerResponse = Generator[None] | AsyncGenerator[None] | None
+_Handler = Callable[..., HandlerResponse]
+HandlerType = Callable[Concatenate[RequestIO, Response, P], HandlerResponse]
+Spec = tuple[str, type]
+RouteSpec = list[Spec]
 T = TypeVar("T")
 
 
@@ -68,7 +71,7 @@ def consume_async_generator(gen: AsyncGenerator[None]) -> None:
     await_in_sync(fn(gen))
 
 
-def parse_param_spec(param: str) -> tuple[str, type]:
+def parse_param_spec(param: str) -> Spec:
     """Parse a parameter specification like '{id:int}' into (name, type).
 
     Args:
@@ -91,7 +94,7 @@ def parse_param_spec(param: str) -> tuple[str, type]:
             msg = f"Unknown type: {type_name}"
             raise ValueError(msg)
 
-        method = locals()[type_name]  # pyright: ignore[reportAny]
+        method = getattr(builtins, type_name)  # pyright: ignore[reportAny]
         assert isinstance(method, type)
         type_constructor = method
     else:
@@ -101,7 +104,7 @@ def parse_param_spec(param: str) -> tuple[str, type]:
     return (name, type_constructor)
 
 
-def _parse_path_params(pattern: str) -> ParamSpec:
+def parse_route_spec(pattern: str) -> RouteSpec:
     """Parse a route pattern to extract parameter specifications.
 
     Args:
@@ -110,13 +113,14 @@ def _parse_path_params(pattern: str) -> ParamSpec:
     Returns:
         A list of (name, type) tuples for each parameter
     """
-    param_specs: ParamSpec = []
+    param_specs: RouteSpec = []
     parts = pattern.split("/")
     for part in parts:
         if not part:
             continue
         if part.startswith("{") and part.endswith("}"):
             param_specs.append(parse_param_spec(part))
+
     return param_specs
 
 
@@ -146,13 +150,13 @@ def match_pattern(pattern: str, path: str) -> bool:
     return True
 
 
-def extract_params(pattern: str, path: str, param_specs: ParamSpec) -> dict[str, Any]:  # pyright: ignore[reportExplicitAny, reportUnusedParameter]
+def extract_params(pattern: str, path: str, param_specs: RouteSpec) -> dict[str, Any]:  # pyright: ignore[reportExplicitAny, reportUnusedParameter]
     """Extract parameter values from a path using the param specs.
 
     Args:
         pattern: The route pattern like '/users/{id:int}'
         path: The actual path like '/users/123'
-        param_specs: The parameter specifications from _parse_path_params
+        param_specs: The parameter specifications from parse_path_params
 
     Returns:
         A dictionary of parameter names to typed values
@@ -192,8 +196,11 @@ class HttpServer:
         self._request_timeout: float = request_timeout
         self._read_timeout: float = read_timeout
         self._destination: RNS.Destination | None = None
-        self._handlers: dict[tuple[str, str], tuple[HandlerType, ParamSpec]] = {}
-        self._default_handler: HandlerType | None = None
+        self._handlers: dict[
+            tuple[str, str],
+            tuple[_Handler, RouteSpec],
+        ] = {}
+        self._default_handler: _Handler | None = None
         self._running: bool = False
 
     @staticmethod
@@ -217,7 +224,7 @@ class HttpServer:
 
     def route(
         self, path: str, method: str = "GET"
-    ) -> Callable[[HandlerType], HandlerType]:
+    ) -> Callable[[HandlerType[P]], HandlerType[P]]:
         """Decorator to register a handler for a path and method.
 
         Usage:
@@ -232,19 +239,21 @@ class HttpServer:
                 response.body = b"OK"
         """
 
-        def decorator(handler: HandlerType) -> HandlerType:
-            param_specs = _parse_path_params(path)
+        def decorator(handler: HandlerType[P]) -> HandlerType[P]:
+            param_specs = parse_route_spec(path)
             self._handlers[(method.upper(), path)] = (handler, param_specs)
             return handler
 
         return decorator
 
-    def add_handler(self, path: str, handler: HandlerType, method: str = "GET") -> None:
+    def add_handler(
+        self, path: str, handler: HandlerType[P], method: str = "GET"
+    ) -> None:
         """Add a handler for a path and method."""
-        param_specs = _parse_path_params(path)
+        param_specs = parse_route_spec(path)
         self._handlers[(method.upper(), path)] = (handler, param_specs)
 
-    def set_default_handler(self, handler: HandlerType) -> None:
+    def set_default_handler(self, handler: HandlerType[P]) -> None:
         """Set a default handler for all requests."""
         self._default_handler = handler
 
@@ -310,7 +319,7 @@ class HttpServer:
 
     def get_handler(
         self, request_io: RequestIO
-    ) -> tuple[HandlerType, ParamSpec, str] | None:
+    ) -> tuple[HandlerType[P], RouteSpec, str] | None:
         """Find handler for request. Returns None if no handler found.
 
         Returns:

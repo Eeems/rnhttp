@@ -56,15 +56,14 @@ if __name__ == "__main__":
         response.add_header("Content-Type", "application/json")
         response.body = b'{"message": "Hello, World!"}'
 
-    @server.route("/echo/*")
-    def _handle_echo(request: RequestIO, response: Response) -> None:  # pyright: ignore[reportUnusedFunction]
+    @server.route("/echo/{data}")
+    def _handle_echo(_request: RequestIO, response: Response, data: str) -> None:  # pyright: ignore[reportUnusedFunction]
         """Handle requests to /echo/* path - echoes back the path."""
         response.status = 200
         response.add_header("Content-Type", "text/plain")
-        path = request.url.path or "/echo"
-        response.body = f"Echo: {path}".encode()
+        response.body = f"Echo: /echo/{data}".encode()
 
-    @server.route("/resource")
+    @server.route("/resource", "GET")
     @server.route("/resource", "POST")
     @server.route("/resource", "PUT")
     @server.route("/resource", "DELETE")

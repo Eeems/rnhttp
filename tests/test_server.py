@@ -1,11 +1,18 @@
 """Tests for rnhttp server."""
 
-import asyncio
+import io
 import os
+from typing import (
+    TYPE_CHECKING,
+    cast,
+)
 from unittest.mock import (
     MagicMock,
     patch,
 )
+
+if TYPE_CHECKING:
+    pass
 
 from rnhttp._http import (
     RequestIO,
@@ -174,3 +181,26 @@ class TestHttpServerGetHandler:
 
             handler = server.get_handler(request_io)
             assert handler is None
+
+    def test_handle_request_with_int_param(self):
+        """handle_request passes int param to handler correctly."""
+        server = HttpServer(port=8080)
+        user_id: int | None = None
+
+        @server.route("/users/{user:int}")
+        def _handler(_request: RequestIO, response: Response, user: int) -> None:  # pyright: ignore[reportUnusedFunction]
+            nonlocal user_id
+            user_id = user
+            response.status = 200
+
+        with RequestIO() as request_io, io.BytesIO() as writer:
+            _ = request_io.write(
+                b"GET /users/123 HTTP/1.1\r\nHost: example.com\r\n\r\n"
+            )
+            server.handle_request(
+                None,  # pyright: ignore[reportArgumentType]
+                request_io,
+                cast(io.BufferedWriter, writer),  # pyright: ignore[reportInvalidCast]
+            )
+
+        assert user_id == 123
