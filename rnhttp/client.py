@@ -71,12 +71,10 @@ class HttpClient:
     async def connect(self) -> None:
         """Connect to the server."""
         _ = self._load_or_create_identity()
-        RNS.Transport.request_path(self._destination_hash)  # pyright: ignore[reportUnknownMemberType]
-        if not RNS.Transport.has_path(self._destination_hash):  # pyright: ignore[reportUnknownMemberType]
-            if not RNS.Transport.await_path(  # pyright: ignore[reportUnknownMemberType]
-                self._destination_hash, self._connect_timeout
-            ):
-                raise TransportError("Timeout waiting for path to server")
+        if not RNS.Transport.await_path(  # pyright: ignore[reportUnknownMemberType]
+            self._destination_hash, self._connect_timeout
+        ):
+            raise TransportError("Timeout waiting for path to server")
 
         server_identity = RNS.Identity.recall(self._destination_hash)  # pyright: ignore[reportUnknownMemberType]
         if server_identity is None:
