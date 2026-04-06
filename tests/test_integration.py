@@ -235,6 +235,66 @@ class HttpIntegrationStack:
 
         threading.Thread(target=fn, args=(self.server_proc,), daemon=True).start()
 
+    def start_socks_proxy(self, socks_port: int = 1080) -> subprocess.Popen[str]:
+        """Start the SOCKS5 proxy pointing at the server."""
+        assert self.server_hash is not None
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-u",
+                "examples/socks_proxy.py",
+                self.server_hash,
+                str(self.server_port),
+                f"--listen=127.0.0.1:{socks_port}",
+                "--config",
+                str(self.rns_config),
+                "-v",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env={**os.environ, "RNS_CONFIG_PATH": str(self.rns_config)},
+        )
+
+        # Wait for proxy to start listening
+        assert proc.stdout is not None
+        started = False
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                if proc.poll() is not None:
+                    raise SetupError(
+                        f"socks_proxy exited early with code {proc.returncode}"
+                    )
+                continue
+
+            print(f"SOCKS_PROXY: {line.rstrip()}", file=sys.stderr)
+            if "SOCKS5 proxy listening on" in line:
+                started = True
+                break
+
+        if not started:
+            proc.terminate()
+            try:
+                _ = proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                _ = proc.wait()
+            raise SetupError("SOCKS proxy did not start")
+
+        # Start a thread to drain stdout so it doesn't block
+        def fn(p: subprocess.Popen[str]) -> None:
+            while p.poll() is None:
+                if p.stdout is not None:
+                    line = p.stdout.readline()
+                    if line:
+                        print(f"SOCKS_PROXY: {line.rstrip()}", file=sys.stderr)
+
+        threading.Thread(target=fn, args=(proc,), daemon=True).start()
+
+        return proc
+
     def run_client(
         self,
         path: str,
@@ -434,4 +494,80 @@ class TestHttpIntegration:
             assert "HTTP/" in result.stdout
 
         finally:
+            stack.cleanup()
+
+    def test_socks_proxy_via_curl(self) -> None:
+        """Test SOCKS5 proxy using curl as client."""
+        if not _rnsd_config_dir:
+            raise SetupError("RNS not available")
+
+        stack = HttpIntegrationStack(_rnsd_config_dir)
+        socks_proc: subprocess.Popen[str] | None = None
+        try:
+            stack.start_server()
+            socks_port = 19876
+            socks_proc = stack.start_socks_proxy(socks_port)
+
+            # First request
+            result = subprocess.run(
+                [
+                    "curl",
+                    "--socks5-hostname",
+                    f"127.0.0.1:{socks_port}",
+                    "--http1.1",
+                    "--max-time",
+                    "30",
+                    "-v",
+                    "-w",
+                    "\n%{http_code}",
+                    "http://localhost/",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=45,
+                check=False,
+            )
+            print(f"CURL STDOUT (1): {result.stdout}", file=sys.stderr)
+            print(f"CURL STDERR (1): {result.stderr}", file=sys.stderr)
+            assert result.returncode == 0, f"curl failed: {result.stderr}"
+            assert "200" in result.stdout, f"Expected 200 in output: {result.stdout}"
+            assert "Hello from RNS HTTP Server!" in result.stdout, (
+                f"Expected body in output: {result.stdout}"
+            )
+
+            # Second request - verify proxy handles multiple connections
+            result = subprocess.run(
+                [
+                    "curl",
+                    "--socks5-hostname",
+                    f"127.0.0.1:{socks_port}",
+                    "--http1.1",
+                    "--max-time",
+                    "30",
+                    "-v",
+                    "-w",
+                    "\n%{http_code}",
+                    "http://localhost/hello",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=45,
+                check=False,
+            )
+            print(f"CURL STDOUT (2): {result.stdout}", file=sys.stderr)
+            print(f"CURL STDERR (2): {result.stderr}", file=sys.stderr)
+            assert result.returncode == 0, f"curl failed: {result.stderr}"
+            assert "200" in result.stdout, f"Expected 200 in output: {result.stdout}"
+            assert "Hello, World!" in result.stdout, (
+                f"Expected body in output: {result.stdout}"
+            )
+
+        finally:
+            if socks_proc is not None:
+                socks_proc.terminate()
+                try:
+                    _ = socks_proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    socks_proc.kill()
+                    _ = socks_proc.wait()
             stack.cleanup()
