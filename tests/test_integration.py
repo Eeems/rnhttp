@@ -3,6 +3,7 @@
 import os
 import random
 import re
+import socket
 import string
 import subprocess
 import sys
@@ -20,9 +21,27 @@ class SetupError(RuntimeError):
     pass
 
 
+def _get_free_port() -> int:
+    """Ask OS for a free port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])  # pyright: ignore[reportAny]
+
+
 def randomword(length: int) -> str:
     letters = string.ascii_lowercase
     return "".join(random.choice(letters) for _ in range(length))  # noqa: S311
+
+
+def _drain_subprocess_output(proc: subprocess.Popen[str], prefix: str) -> None:
+    """Drain stdout/stderr from a subprocess, printing with a prefix."""
+    while proc.poll() is None:
+        for f in (proc.stdout, proc.stderr):
+            if f is None:
+                continue
+            line = f.readline()
+            if line:
+                print(f"{prefix}: {line}", file=sys.stderr, end="")
 
 
 RETICULUM_CONFIG = f"""
@@ -127,17 +146,9 @@ def shared_rnsd() -> Generator[Path, Any, None]:  # pyright: ignore[reportExplic
                 + f"\n  rnstatus: {proc.returncode} {proc.stdout or ''}"
             )
 
-        def fn(proc: subprocess.Popen[str]) -> None:
-            while proc.poll() is None:
-                for f in (proc.stdout, proc.stderr):
-                    if f is None:
-                        continue
-
-                    line = f.readline()
-                    if line:
-                        print(f"rnsd: {line}", file=sys.stderr, end="")
-
-        threading.Thread(target=fn, args=(rnsd_proc,), daemon=True).start()
+        threading.Thread(
+            target=_drain_subprocess_output, args=(rnsd_proc, "rnsd"), daemon=True
+        ).start()
 
         _rnsd_process = rnsd_proc
         _rnsd_config_dir = Path(config_dir)
@@ -157,6 +168,7 @@ class HttpIntegrationStack:
     def __init__(self, rns_config: Path) -> None:
         self.rns_config: Path = rns_config
         self.server_proc: subprocess.Popen[str] | None = None
+        self.proxy_proc: subprocess.Popen[str] | None = None
         self.server_hash: str | None = None
         self.server_port: int = 8080
 
@@ -223,17 +235,63 @@ class HttpIntegrationStack:
             if self.server_proc.poll() is not None:
                 raise SetupError("Server exited early")
 
-        def fn(proc: subprocess.Popen[str]) -> None:
-            while proc.poll() is None:
-                for f in (proc.stdout, proc.stderr):
-                    if f is None:
-                        continue
+        threading.Thread(
+            target=_drain_subprocess_output,
+            args=(self.server_proc, "SERVER"),
+            daemon=True,
+        ).start()
 
-                    line = f.readline()
-                    if line:
-                        print(f"SERVER: {line}", file=sys.stderr, end="")
+    def start_proxy_server(self) -> None:
+        """Start the proxy server (runs both HTTP and HTTPS handlers)."""
+        if self.proxy_proc is not None and self.proxy_proc.poll() is None:
+            return
 
-        threading.Thread(target=fn, args=(self.server_proc,), daemon=True).start()
+        self.proxy_proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-u",
+                "examples/proxy_server.py",
+                "--config",
+                str(self.rns_config),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env={**os.environ, "RNS_CONFIG_PATH": str(self.rns_config)},
+        )
+
+        dest_hash = None
+        assert self.proxy_proc.stdout is not None
+        while True:
+            line = self.proxy_proc.stdout.readline()
+            if not line:
+                print("Exiting thread due to empty readline", file=sys.stderr)
+                break
+
+            if self.proxy_proc.poll() is not None:
+                print("Exiting thread due to application stopping", file=sys.stderr)
+                break
+
+            print(f"PROXY_SERVER: {line.rstrip()}", file=sys.stderr)
+            match = re.search(r"Destination: <([a-f0-9]+)>", line)
+            if match:
+                dest_hash = match.group(1)
+                break
+
+        if self.proxy_proc.poll() is not None:
+            raise SetupError(
+                f"proxy_server exited early with code {self.proxy_proc.returncode}"
+            )
+
+        assert dest_hash is not None, "Could not get destination hash from proxy server"
+        self.server_hash = dest_hash
+
+        threading.Thread(
+            target=_drain_subprocess_output,
+            args=(self.proxy_proc, "PROXY_SERVER"),
+            daemon=True,
+        ).start()
 
     def start_socks_proxy(self, socks_port: int = 1080) -> subprocess.Popen[str]:
         """Start the SOCKS5 proxy pointing at the server."""
@@ -244,7 +302,6 @@ class HttpIntegrationStack:
                 "-u",
                 "examples/socks_proxy.py",
                 self.server_hash,
-                str(self.server_port),
                 f"--listen=127.0.0.1:{socks_port}",
                 "--config",
                 str(self.rns_config),
@@ -284,14 +341,9 @@ class HttpIntegrationStack:
             raise SetupError("SOCKS proxy did not start")
 
         # Start a thread to drain stdout so it doesn't block
-        def fn(p: subprocess.Popen[str]) -> None:
-            while p.poll() is None:
-                if p.stdout is not None:
-                    line = p.stdout.readline()
-                    if line:
-                        print(f"SOCKS_PROXY: {line.rstrip()}", file=sys.stderr)
-
-        threading.Thread(target=fn, args=(proc,), daemon=True).start()
+        threading.Thread(
+            target=_drain_subprocess_output, args=(proc, "SOCKS_PROXY"), daemon=True
+        ).start()
 
         return proc
 
@@ -338,19 +390,25 @@ class HttpIntegrationStack:
             raise
 
     def cleanup(self) -> None:
-        if not self.server_proc:
-            return
+        if self.server_proc:
+            self.server_proc.terminate()
+            try:
+                _ = self.server_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.server_proc.kill()
+                _ = self.server_proc.wait()
+            if self.server_proc.stdout is not None:
+                print(self.server_proc.stdout.read())
 
-        self.server_proc.terminate()
-        try:
-            _ = self.server_proc.wait(timeout=5)
-
-        except subprocess.TimeoutExpired:
-            self.server_proc.kill()
-            _ = self.server_proc.wait()
-
-        if self.server_proc.stdout is not None:
-            print(self.server_proc.stdout.read())
+        if self.proxy_proc:
+            self.proxy_proc.terminate()
+            try:
+                _ = self.proxy_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.proxy_proc.kill()
+                _ = self.proxy_proc.wait()
+            if self.proxy_proc.stdout is not None:
+                print(self.proxy_proc.stdout.read())
 
 
 class TestHttpIntegration:
@@ -504,8 +562,9 @@ class TestHttpIntegration:
         stack = HttpIntegrationStack(_rnsd_config_dir)
         socks_proc: subprocess.Popen[str] | None = None
         try:
-            stack.start_server()
-            socks_port = 19876
+            # Start basic_server on port 80 to match SOCKS CONNECT port
+            stack.start_server(port=80)
+            socks_port = _get_free_port()
             socks_proc = stack.start_socks_proxy(socks_port)
 
             # First request
@@ -514,7 +573,6 @@ class TestHttpIntegration:
                     "curl",
                     "--socks5-hostname",
                     f"127.0.0.1:{socks_port}",
-                    "--http1.1",
                     "--max-time",
                     "30",
                     "-v",
@@ -541,7 +599,6 @@ class TestHttpIntegration:
                     "curl",
                     "--socks5-hostname",
                     f"127.0.0.1:{socks_port}",
-                    "--http1.1",
                     "--max-time",
                     "30",
                     "-v",
@@ -561,6 +618,59 @@ class TestHttpIntegration:
             assert "Hello, World!" in result.stdout, (
                 f"Expected body in output: {result.stdout}"
             )
+
+        finally:
+            if socks_proc is not None:
+                socks_proc.terminate()
+                try:
+                    _ = socks_proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    socks_proc.kill()
+                    _ = socks_proc.wait()
+            stack.cleanup()
+
+    def test_proxy_server_http(self) -> None:
+        """Test proxy server with HTTP requests."""
+        if not _rnsd_config_dir:
+            raise SetupError("RNS not available")
+
+        stack = HttpIntegrationStack(_rnsd_config_dir)
+        socks_proc: subprocess.Popen[str] | None = None
+        try:
+            # Start proxy server (handles both HTTP and HTTPS)
+            stack.start_proxy_server()
+            socks_port = _get_free_port()
+            socks_proc = stack.start_socks_proxy(socks_port)
+
+            # Test HTTP via proxy
+            result = subprocess.run(
+                [
+                    "curl",
+                    "--socks5-hostname",
+                    f"127.0.0.1:{socks_port}",
+                    "--max-time",
+                    "30",
+                    "-v",
+                    "-A",
+                    "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0",
+                    "-w",
+                    "\n%{http_code}",
+                    "http://frogfind.com/",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=45,
+                check=False,
+            )
+            print(f"CURL HTTP STDOUT: {result.stdout}", file=sys.stderr)
+            print(f"CURL HTTP STDERR: {result.stderr}", file=sys.stderr)
+            assert result.returncode == 0, f"HTTP curl failed: {result.stderr}"
+            assert "200" in result.stdout, (
+                f"Expected 200 in HTTP response: {result.stdout}"
+            )
+            # Verify we actually got body content, not just headers
+            body = result.stdout.rsplit("\n", 1)[0]  # Remove status code line
+            assert len(body) > 100, f"Expected substantial body content, got: {body!r}"
 
         finally:
             if socks_proc is not None:

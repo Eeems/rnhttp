@@ -301,9 +301,15 @@ class HttpServer:
             request_io.close()
             return
 
-        data = reader.read(ready)
-        _ = request_io.write(data)
-        request_io.flush()
+        try:
+            data = reader.read(ready)
+            _ = request_io.write(data)
+            request_io.flush()
+
+        except Exception:
+            reader.close()
+            request_io.close()
+            raise
 
     def on_link_closed(self, link: RNS.Link) -> None:
         """Handle link close."""
@@ -349,14 +355,21 @@ class HttpServer:
         writer: io.BufferedWriter,
     ) -> None:
         """Handle incoming HTTP request."""
+        # Wait for URL to be parsed (may fail if data was corrupted)
+        if not request_io.callbacks.wait_url(timeout=5):
+            request_io.close()
+            size = Response(400, body=b"Bad Request").sendto(writer)
+            print(f"{link} 400 {size}b")
+            return
+
         method = request_io.method
         path = request_io.url.path
         print(f"{link} {method} {path}")
         result = self.get_handler(request_io)
         if result is None:
             request_io.close()
-            Response(404, body=b"Not Found").sendto(writer)
-            print(f"{link} {method} {path} 404")
+            size = Response(404, body=b"Not Found").sendto(writer)
+            print(f"{link} {method} {path} 404 {size}b")
             return
 
         handler, param_specs, route_pattern = result
@@ -365,34 +378,34 @@ class HttpServer:
             params = extract_params(route_pattern, path or "", param_specs)
         except ValueError:
             request_io.close()
-            Response(400, body=b"Bad Request").sendto(writer)
-            print(f"{link} {method} {path} 400")
+            size = Response(400, body=b"Bad Request").sendto(writer)
+            print(f"{link} {method} {path} 400 {size}b")
             return
 
+        size = 0
         try:
             # Extract params from path (may raise ValueError -> 400)
             gen = handler(request_io, response, **params)
             request_io.close()
             if isinstance(gen, GeneratorType | AsyncGeneratorType):
-                sendto_thread = threading.Thread(target=response.sendto, args=(writer,))
+                sendto_task = asyncio.to_thread(response.sendto, writer)
                 if isinstance(gen, AsyncGeneratorType):
                     consume_async_generator(gen)
 
                 else:
                     consume_generator(gen)
 
-                sendto_thread.start()
-                sendto_thread.join()
+                size = await_in_sync(sendto_task)
 
             else:
-                response.sendto(writer)
+                size = response.sendto(writer)
 
-            print(f"{link} {method} {path} {response.status}")
+            print(f"{link} {method} {path} {response.status} {size}")
 
         except Exception as e:
             request_io.close()
-            Response(500, body=str(e).encode()).sendto(writer)
-            print(f"{link} {method} {path} 500")
+            size = Response(500, body=str(e).encode()).sendto(writer)
+            print(f"{link} {method} {path} 500 {size}b")
             raise
 
     @property

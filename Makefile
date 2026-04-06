@@ -162,7 +162,9 @@ whitelist: requirements-dev ## Generate lint whitelists
 	rm -f rnhttp/__whitelist.py; \
 	python -m vulture --make-whitelist rnhttp/ >rnhttp/__whitelist.py || true; \
 	rm -f tests/__whitelist.py; \
-	python -m vulture --make-whitelist tests/ >tests/__whitelist.py || true
+	python -m vulture --make-whitelist tests/ >tests/__whitelist.py || true; \
+	rm -f examples/__whitelist.py; \
+	python -m vulture --make-whitelist examples/ >examples/__whitelist.py || true
 
 
 .PHONY: lint
@@ -185,7 +187,7 @@ lint: requirements-dev ## Lint the codebase
 	  echo "OKAY"; \
 	}; \
 	runtool ruff check --fix; \
-	for dir in rnhttp tests;do \
+	for dir in rnhttp tests examples;do \
 	  for tool in basedpyright vulture;do \
 	    runtool "$$tool" "$$dir"; \
 	  done; \

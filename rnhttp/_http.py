@@ -228,13 +228,19 @@ class Callbacks:
         if not self.wait_ready(timeout):
             return False
 
-        return self.status_event.wait(timeout)
+        if not self.status_event.wait(timeout):
+            return False
+
+        return self.status is not None
 
     def wait_url(self, timeout: float | None = None) -> bool:
         if not self.wait_ready(timeout):
             return False
 
-        return self.url_event.wait(timeout)
+        if not self.url_event.wait(timeout):
+            return False
+
+        return self.url is not None
 
     def drain(self) -> None:
         self._on_message_begin = None
@@ -294,7 +300,9 @@ class CallbacksIO(io.RawIOBase):
 
     @property
     def headers(self) -> dict[str, list[str]]:
-        _ = self.callbacks.wait_headers()
+        if not self.callbacks.wait_headers():
+            raise ValueError("Unable to get headers")
+
         return self.callbacks.headers
 
     def __len__(self) -> int:
@@ -359,13 +367,17 @@ class RequestIO(CallbacksIO):
 
     @property
     def url(self) -> URL:
-        _ = self.callbacks.wait_url()
+        if not self.callbacks.wait_url():
+            raise ValueError("Unable to get url")
+
         assert self.callbacks.url is not None
         return self.callbacks.url
 
     @property
     def method(self) -> str:
-        _ = self.callbacks.wait_ready()
+        if not self.callbacks.wait_ready():
+            raise ValueError("unable to get method")
+
         assert isinstance(self.parser, HttpRequestParser)
         return self.parser.get_method().decode(self.encoding)
 
@@ -377,13 +389,17 @@ class ResponseIO(CallbacksIO):
 
     @property
     def reason(self) -> str:
-        _ = self.callbacks.wait_status()
+        if not self.callbacks.wait_status():
+            raise ValueError("Unable to get reason")
+
         assert self.callbacks.status is not None
         return self.callbacks.status
 
     @property
     def status(self) -> int:
-        _ = self.callbacks.wait_status()
+        if not self.callbacks.wait_status():
+            raise ValueError("Unable to get status")
+
         assert self.callbacks.status is not None
         assert isinstance(self.parser, HttpResponseParser)
         return self.parser.get_status_code()
@@ -446,7 +462,7 @@ class HttpSendTo:
             case _:
                 raise ValueError(f"Header {name} has more than one value")
 
-    def sendto(self, stream: Writer[bytes]) -> None:
+    def sendto(self, stream: Writer[bytes]) -> int:
         body = self.body
         if isinstance(body, bytes):
             body = io.BytesIO(body)
@@ -474,6 +490,7 @@ class HttpSendTo:
         _ = stream.write(b"\r\n")
 
         flush()
+        size = 0
         if body is not None:
             while True:
                 chunk = body.read(4096)
@@ -481,20 +498,21 @@ class HttpSendTo:
                     break
 
                 if transfer_encoding == "chunked":
-                    _ = stream.write(
+                    size += stream.write(
                         f"{len(chunk):x}".encode() + b"\r\n" + chunk + b"\r\n"
                     )
 
                 else:
-                    _ = stream.write(chunk)
+                    size += stream.write(chunk)
 
             if transfer_encoding == "chunked":
-                _ = stream.write(b"0" + b"\r\n\r\n")
+                size += stream.write(b"0" + b"\r\n\r\n")
 
             flush()
 
         _ = stream.write(b"")  # EOF
         flush()
+        return size
 
 
 class Request(HttpSendTo):

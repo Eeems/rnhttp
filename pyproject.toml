@@ -82,13 +82,12 @@ ignore = [
 [tool.pyright]
 exclude = [".venv", "build", "**/__whitelist.py"]
 reportMissingTypeStubs = false
+failOnWarnings = true
 
 [tool.vulture]
 ignore_names = ["__*", "_*", "_"]
 ignore_decorators = [
-    "@app.request",
-    "@app.page",
-    "@app.file",
+    "@server.route",
     '@pytest.fixture',
 ]
 exclude = [

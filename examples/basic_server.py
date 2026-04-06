@@ -12,8 +12,7 @@ from rnhttp._http import (
     Response,
 )
 
-
-async def main() -> None:
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="HTTP/1.1 server over Reticulum")
     _ = parser.add_argument("port", type=int, help="Port number")
     _ = parser.add_argument("--config", type=str, help="RNS config directory")
@@ -26,34 +25,39 @@ async def main() -> None:
         dest="verbose",
     )
     args = parser.parse_args()
-    assert isinstance(args.config, str | None)  # pyright: ignore[reportAny]
-    assert isinstance(args.verbose, bool)  # pyright: ignore[reportAny]
 
-    config_path = args.config
+    assert isinstance(args.port, int)  # pyright: ignore[reportAny]
+    port: int = args.port
+    assert isinstance(args.identity, str | None)  # pyright: ignore[reportAny]
+    identity_path: str | None = args.identity
+    assert isinstance(args.config, str | None)  # pyright: ignore[reportAny]
+    config_path: str | None = args.config
     if config_path is None:
         config_path = os.environ.get("RNS_CONFIG_PATH", None)
+    assert isinstance(args.verbose, bool)  # pyright: ignore[reportAny]
+    verbose: bool = args.verbose
 
     server = HttpServer(
-        port=args.port,
-        identity_path=args.identity,
+        port=port,
+        identity_path=identity_path,
     )
 
     @server.route("/")
-    def handle_root(_request: RequestIO, response: Response) -> None:
+    def _handle_root(_request: RequestIO, response: Response) -> None:  # pyright: ignore[reportUnusedFunction]
         """Handle requests to root path."""
         response.status = 200
         response.add_header("Content-Type", "text/plain")
         response.body = b"Hello from RNS HTTP Server!"
 
     @server.route("/hello")
-    def handle_hello(_request: RequestIO, response: Response) -> None:
+    def _handle_hello(_request: RequestIO, response: Response) -> None:  # pyright: ignore[reportUnusedFunction]
         """Handle requests to /hello path."""
         response.status = 200
         response.add_header("Content-Type", "application/json")
         response.body = b'{"message": "Hello, World!"}'
 
     @server.route("/echo/*")
-    def handle_echo(request: RequestIO, response: Response) -> None:
+    def _handle_echo(request: RequestIO, response: Response) -> None:  # pyright: ignore[reportUnusedFunction]
         """Handle requests to /echo/* path - echoes back the path."""
         response.status = 200
         response.add_header("Content-Type", "text/plain")
@@ -64,29 +68,29 @@ async def main() -> None:
     @server.route("/resource", "POST")
     @server.route("/resource", "PUT")
     @server.route("/resource", "DELETE")
-    def handle_resource(_request: RequestIO, response: Response) -> None:
+    def _handle_resource(_request: RequestIO, response: Response) -> None:  # pyright: ignore[reportUnusedFunction]
         """Handle requests to /resource path."""
         response.status = 200
 
     print("Starting RNS HTTP Server...")
     print("=" * 50)
 
-    _ = RNS.Reticulum(config_path, RNS.LOG_VERBOSE if args.verbose else RNS.LOG_WARNING)
-    await server.start()
+    _ = RNS.Reticulum(config_path, RNS.LOG_VERBOSE if verbose else RNS.LOG_WARNING)
 
-    print(f"Server listening on HTTP.{server.port}")
-    print(f"Destination: <{server.destination_hash}>")
-    print("\nServer is running. Press Ctrl+C to stop.")
-    print("=" * 50)
+    async def loop():
+        await server.start()
 
-    try:
-        await asyncio.sleep(float("infinity"))
+        print(f"Server listening on HTTP.{server.port}")
+        print(f"Destination: <{server.destination_hash}>")
+        print("\nServer is running. Press Ctrl+C to stop.")
+        print("=" * 50)
 
-    except KeyboardInterrupt:
-        print("\nStopping server...")
-        await server.stop()
-        print("Server stopped.")
+        try:
+            await asyncio.sleep(float("infinity"))
 
+        except KeyboardInterrupt:
+            print("\nStopping server...")
+            await server.stop()
+            print("Server stopped.")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(loop())

@@ -9,15 +9,14 @@ import threading
 import time
 
 from rnhttp._http import (
+    URL,
     Callbacks,
     HttpSendTo,
     Request,
     RequestIO,
     Response,
     ResponseIO,
-    URL,
 )
-
 
 # ---------------------------------------------------------------------------
 # URL
@@ -295,7 +294,7 @@ class TestHttpSendTo:
         r = Request("POST", URL(host="example.com", path="/submit"), body=b"hello")
         r.headers["X-Custom"] = ["value"]
         buf = io.BytesIO()
-        r.sendto(buf)
+        _ = r.sendto(buf)
         out = buf.getvalue()
         assert b"X-Custom: value\r\n" in out
         assert b"content-length: 5\r\n" in out
@@ -326,7 +325,7 @@ class TestHttpSendTo:
             body=UnsizedReader(b"hello"),
         )
         buf = io.BytesIO()
-        r.sendto(buf)
+        _ = r.sendto(buf)
         out = buf.getvalue()
         # chunked format: size\r\ndata\r\n...0\r\n\r\n
         assert b"5\r\nhello\r\n" in out
@@ -335,7 +334,7 @@ class TestHttpSendTo:
     def test_sendto_bytes_body_not_chunked(self) -> None:
         r = Request("POST", URL(host="example.com", path="/"), body=b"hello")
         buf = io.BytesIO()
-        r.sendto(buf)
+        _ = r.sendto(buf)
         out = buf.getvalue()
         # bytes body uses content-length, not chunked
         assert b"content-length: 5\r\n" in out
@@ -344,7 +343,7 @@ class TestHttpSendTo:
     def test_sendto_empty_body(self) -> None:
         r = Request("GET", URL(host="example.com", path="/"))
         buf = io.BytesIO()
-        r.sendto(buf)
+        _ = r.sendto(buf)
         out = buf.getvalue()
         assert out.endswith(b"\r\n")
 
@@ -380,7 +379,7 @@ class TestRequest:
     def test_sendto(self) -> None:
         r = Request("POST", URL(host="example.com", path="/submit"), body=b"data")
         buf = io.BytesIO()
-        r.sendto(buf)
+        _ = r.sendto(buf)
         out = buf.getvalue()
         assert out.startswith(b"POST /submit HTTP/1.1\r\n")
         assert b"host: example.com\r\n" in out
@@ -394,7 +393,7 @@ class TestRequest:
             body=io.BytesIO(b"streamed"),
         )
         buf = io.BytesIO()
-        r.sendto(buf)
+        _ = r.sendto(buf)
         out = buf.getvalue()
         # BytesIO is not bytes, so sendto uses chunked encoding
         assert b"8\r\nstreamed\r\n" in out
@@ -431,7 +430,7 @@ class TestResponse:
     def test_sendto(self) -> None:
         r = Response(200, body=b"hello")
         buf = io.BytesIO()
-        r.sendto(buf)
+        _ = r.sendto(buf)
         out = buf.getvalue()
         assert out.startswith(b"HTTP/1.1 200 OK\r\n")
         assert b"content-length: 5\r\n" in out
@@ -440,7 +439,7 @@ class TestResponse:
     def test_sendto_chunked(self) -> None:
         r = Response(200, body=io.BytesIO(b"streamed"))
         buf = io.BytesIO()
-        r.sendto(buf)
+        _ = r.sendto(buf)
         out = buf.getvalue()
         # BytesIO is not bytes, so sendto uses chunked encoding
         assert b"8\r\nstreamed\r\n" in out

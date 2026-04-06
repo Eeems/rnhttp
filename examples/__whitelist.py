@@ -1,0 +1,7 @@
+_.body  # unused attribute (examples/basic_server.py:47)
+_.body  # unused attribute (examples/basic_server.py:54)
+_.body  # unused attribute (examples/basic_server.py:62)
+_.body  # unused attribute (examples/proxy_server.py:47)
+_.body  # unused attribute (examples/proxy_server.py:76)
+_.body  # unused attribute (examples/proxy_server.py:80)
+_.body  # unused attribute (examples/proxy_server.py:85)

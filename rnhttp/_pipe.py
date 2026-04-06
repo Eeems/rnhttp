@@ -24,6 +24,10 @@ class PipeIO(io.RawIOBase):
         self._write_ready: threading.Event = threading.Event()
         self._write_ready.set()
         self._eof: bool = False
+        self._length: int = 0
+
+    def __len__(self) -> int:
+        return self._length
 
     @override
     def write(self, data: "ReadableBuffer", /) -> int:
@@ -63,6 +67,7 @@ class PipeIO(io.RawIOBase):
             if self._available >= self._capacity:
                 self._write_ready.clear()
 
+        self._length += length
         return length
 
     @override

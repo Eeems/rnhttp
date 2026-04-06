@@ -144,9 +144,9 @@ class HttpClient:
 
         url = URL(host=host, path=path)
         request = Request(method=method, url=url, headers=headers, body=body)
-        return await self._send_request(request)
+        return await self.send_request(request)
 
-    async def _send_request(self, request: Request) -> ResponseIO:
+    async def send_request(self, request: Request) -> ResponseIO:
         """Send request and wait for response."""
         if self._link is None:
             raise TransportError("Not connected")
@@ -166,7 +166,7 @@ class HttpClient:
         writer = RNS.Buffer.create_writer(0, channel)
         response_io = ResponseIO()
         reader = RNS.Buffer.create_reader(0, channel, on_reader_ready)
-        request.sendto(writer)
+        _ = request.sendto(writer)
         writer.close()
         return response_io
 
